@@ -1,0 +1,149 @@
+from datetime import datetime
+
+import streamlit as st
+
+from utils.usage_tracker import (
+    get_monthly_stats,
+    get_run_history,
+    estimated_google_cost,
+    using_supabase,
+    OUTSCRAPER_MONTHLY_LIMIT,
+    GOOGLE_MONTHLY_CREDIT_USD,
+    GOOGLE_GEOCODE_COST,
+    GOOGLE_SEARCH_COST,
+    GOOGLE_DETAIL_COST,
+    ADZUNA_DAILY_LIMIT,
+)
+
+# ── Page header ───────────────────────────────────────────────────────────────
+st.markdown(
+    """
+    <div class="page-header">
+        <h1>API Usage</h1>
+        <p>Monthly API consumption and cost estimates across all data sources</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+if using_supabase():
+    st.success("Connected to Supabase — usage data is shared across all machines.")
+
+stats = get_monthly_stats()
+g = stats["google"]
+a = stats["adzuna"]
+o = stats["outscraper"]
+
+month_label = datetime.strptime(stats["year_month"], "%Y-%m").strftime("%B %Y")
+st.caption(f"Showing data for {month_label} · Resets automatically each calendar month")
+
+st.markdown("---")
+
+# ── Google ────────────────────────────────────────────────────────────────────
+st.markdown("### Google APIs")
+st.caption(
+    f"Geocoding ${GOOGLE_GEOCODE_COST}/call · "
+    f"Text Search ${GOOGLE_SEARCH_COST}/call · "
+    f"Place Details ${GOOGLE_DETAIL_COST}/call · "
+    f"${GOOGLE_MONTHLY_CREDIT_USD:.0f}/month free credit"
+)
+
+gc = g.get("geocode_calls", 0)
+sc = g.get("search_calls", 0)
+dc = g.get("detail_calls", 0)
+total_cost = estimated_google_cost(gc, sc, dc)
+credit_used_pct = min(total_cost / GOOGLE_MONTHLY_CREDIT_USD, 1.0)
+
+col1, col2, col3, col4 = st.columns(4)
+col1.metric("Geocode Calls", gc, help=f"${gc * GOOGLE_GEOCODE_COST:.3f} est.")
+col2.metric("Text Search Calls", sc, help=f"${sc * GOOGLE_SEARCH_COST:.3f} est.")
+col3.metric("Place Detail Calls", dc, help=f"${dc * GOOGLE_DETAIL_COST:.3f} est.")
+col4.metric("Est. Cost", f"${total_cost:.2f}", help=f"Out of ${GOOGLE_MONTHLY_CREDIT_USD:.0f} free credit")
+
+st.progress(
+    credit_used_pct,
+    text=f"${total_cost:.2f} / ${GOOGLE_MONTHLY_CREDIT_USD:.0f} free credit used ({credit_used_pct*100:.1f}%)",
+)
+
+st.markdown("---")
+
+# ── Outscraper ────────────────────────────────────────────────────────────────
+st.markdown("### Outscraper — Deep Reviews")
+st.caption(f"Free tier: {OUTSCRAPER_MONTHLY_LIMIT} reviews/month")
+
+reviews_used = o.get("reviews_used", 0)
+reviews_remaining = max(0, OUTSCRAPER_MONTHLY_LIMIT - reviews_used)
+outscraper_pct = min(reviews_used / OUTSCRAPER_MONTHLY_LIMIT, 1.0)
+
+col1, col2, col3 = st.columns(3)
+col1.metric("Reviews Pulled", reviews_used)
+col2.metric("Remaining", reviews_remaining)
+col3.metric("Free Tier Used", f"{outscraper_pct*100:.1f}%")
+
+st.progress(
+    outscraper_pct,
+    text=f"{reviews_used} / {OUTSCRAPER_MONTHLY_LIMIT} reviews ({outscraper_pct*100:.1f}%)",
+)
+
+if reviews_remaining == 0:
+    st.error("Monthly Outscraper budget exhausted — deep scans are disabled until next month.")
+elif outscraper_pct > 0.8:
+    st.warning(f"Only {reviews_remaining} Outscraper reviews left this month.")
+
+st.markdown("---")
+
+# ── Adzuna ────────────────────────────────────────────────────────────────────
+st.markdown("### Adzuna — Job Signals")
+st.caption(f"Evaluation-use limit: ~{ADZUNA_DAILY_LIMIT} calls/day")
+
+adzuna_calls = a.get("job_fetch_calls", 0)
+col1, col2 = st.columns(2)
+col1.metric("Job Fetch Calls This Month", adzuna_calls)
+col2.metric("Est. Calls Today", "—", help="Per-day tracking not yet implemented")
+
+st.info("Adzuna data is used under evaluation terms. Review their commercial licensing before production use.")
+
+st.markdown("---")
+
+# ── Recent runs ───────────────────────────────────────────────────────────────
+st.markdown("### Recent Runs")
+st.caption("Last 20 runs")
+
+history = get_run_history(20)
+
+if not history:
+    st.caption("No runs recorded yet.")
+else:
+    rows = []
+    for r in history:
+        ts = r.get("timestamp", "")
+        try:
+            ts_fmt = datetime.fromisoformat(ts).strftime("%b %d %H:%M")
+        except Exception:
+            ts_fmt = ts
+
+        g_cost = estimated_google_cost(
+            r.get("geocode_calls", 0),
+            r.get("search_calls", 0),
+            r.get("detail_calls", 0),
+        )
+        rows.append({
+            "Time":               ts_fmt,
+            "Location":           r.get("location", ""),
+            "Clinics Found":      r.get("clinics_found", 0),
+            "Leads Output":       r.get("leads_found", 0),
+            "Geocodes":           r.get("geocode_calls", 0),
+            "Searches":           r.get("search_calls", 0),
+            "Details":            r.get("detail_calls", 0),
+            "Outscraper Reviews": r.get("outscraper_reviews", 0),
+            "Est. Google Cost":   f"${g_cost:.3f}",
+            "Stopped Early":      "⚠️ Yes" if r.get("stopped_early") else "No",
+        })
+
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+st.markdown("---")
+st.caption(
+    "Cost estimates use published Google Maps Platform pricing and are approximate. "
+    "Check your Google Cloud billing dashboard for actuals."
+)
