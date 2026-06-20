@@ -393,6 +393,18 @@ with st.sidebar:
     if not specialty_filter:
         specialty_filter = all_specialties
 
+    st.markdown("Practice Type")
+    all_classifications  = ["Independent", "DSO", "Chain", "Unknown"]
+    classification_filter = st.pills(
+        "Practice Type",
+        options=all_classifications,
+        default=all_classifications,
+        selection_mode="multi",
+        label_visibility="collapsed",
+    )
+    if not classification_filter:
+        classification_filter = all_classifications
+
     st.markdown("Min Pain Score")
     min_pain_score = st.slider(
         "Min Score",
@@ -507,6 +519,8 @@ if leads_df is not None and not _p["running"]:
     df = leads_df.copy()
     if specialty_filter and len(specialty_filter) < len(all_specialties):
         df = df[df["Specialty"].isin(specialty_filter)]
+    if classification_filter and len(classification_filter) < len(all_classifications):
+        df = df[df["Classification"].str.lower().isin([c.lower() for c in classification_filter])]
     df = df[df["Pain Score"] >= min_pain_score]
     df = df.sort_values("Pain Score", ascending=False).reset_index(drop=True)
 
