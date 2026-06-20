@@ -66,9 +66,19 @@ GOOGLE_SEARCH_COST          = 0.032
 GOOGLE_DETAIL_COST          = 0.017
 ADZUNA_DAILY_LIMIT          = 250
 
-# Loaded at import time so background threads can use them without st.secrets
-_SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-_SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+def _load_secret(key: str) -> str:
+    val = os.getenv(key, "")
+    if val:
+        return val
+    try:
+        import streamlit as st
+        return st.secrets.get(key, "")
+    except Exception:
+        return ""
+
+# Captured at import time so background threads can use the values without st.secrets
+_SUPABASE_URL = _load_secret("SUPABASE_URL")
+_SUPABASE_KEY = _load_secret("SUPABASE_KEY")
 
 
 def _supabase_ok() -> bool:
