@@ -15,14 +15,13 @@ from utils.usage_tracker import (
     ADZUNA_DAILY_LIMIT,
 )
 
-# ── Page header ───────────────────────────────────────────────────────────────
+# ── Page header ─────────────────────────────────────────────────────────────────
 st.markdown(
-    """
-    <div class="page-header">
-        <h1>API Usage</h1>
-        <p>Monthly API consumption and cost estimates across all data sources</p>
-    </div>
-    """,
+    "<div class='page-header-linear'>"
+    "<span class='bc-parent'>Kairos</span>"
+    "<span class='bc-sep'>›</span>"
+    "<span class='bc-current'>API Usage</span>"
+    "</div>",
     unsafe_allow_html=True,
 )
 
@@ -37,28 +36,28 @@ o = stats["outscraper"]
 month_label = datetime.strptime(stats["year_month"], "%Y-%m").strftime("%B %Y")
 st.caption(f"Showing data for {month_label} · Resets automatically each calendar month")
 
-st.markdown("---")
+st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-# ── Google ────────────────────────────────────────────────────────────────────
-st.markdown("### Google APIs")
+# ── Google APIs ──────────────────────────────────────────────────────────────────
+st.markdown("### Google Maps Platform")
 st.caption(
-    f"Geocoding ${GOOGLE_GEOCODE_COST}/call · "
-    f"Text Search ${GOOGLE_SEARCH_COST}/call · "
-    f"Place Details ${GOOGLE_DETAIL_COST}/call · "
-    f"${GOOGLE_MONTHLY_CREDIT_USD:.0f}/month free credit"
+    f"Geocoding \\${GOOGLE_GEOCODE_COST}/call · "
+    f"Text Search \\${GOOGLE_SEARCH_COST}/call · "
+    f"Place Details \\${GOOGLE_DETAIL_COST}/call · "
+    f"\\${GOOGLE_MONTHLY_CREDIT_USD:.0f}/month free credit"
 )
 
 gc = g.get("geocode_calls", 0)
 sc = g.get("search_calls", 0)
 dc = g.get("detail_calls", 0)
-total_cost = estimated_google_cost(gc, sc, dc)
-credit_used_pct = min(total_cost / GOOGLE_MONTHLY_CREDIT_USD, 1.0)
+total_cost       = estimated_google_cost(gc, sc, dc)
+credit_used_pct  = min(total_cost / GOOGLE_MONTHLY_CREDIT_USD, 1.0)
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Geocode Calls", gc, help=f"${gc * GOOGLE_GEOCODE_COST:.3f} est.")
-col2.metric("Text Search Calls", sc, help=f"${sc * GOOGLE_SEARCH_COST:.3f} est.")
-col3.metric("Place Detail Calls", dc, help=f"${dc * GOOGLE_DETAIL_COST:.3f} est.")
-col4.metric("Est. Cost", f"${total_cost:.2f}", help=f"Out of ${GOOGLE_MONTHLY_CREDIT_USD:.0f} free credit")
+col1.metric("Geocode Calls",       gc, help=f"${gc * GOOGLE_GEOCODE_COST:.3f} est.")
+col2.metric("Text Search Calls",   sc, help=f"${sc * GOOGLE_SEARCH_COST:.3f} est.")
+col3.metric("Place Detail Calls",  dc, help=f"${dc * GOOGLE_DETAIL_COST:.3f} est.")
+col4.metric("Est. Cost",           f"${total_cost:.2f}", help=f"Out of ${GOOGLE_MONTHLY_CREDIT_USD:.0f} free credit")
 
 st.progress(
     credit_used_pct,
@@ -67,18 +66,18 @@ st.progress(
 
 st.markdown("---")
 
-# ── Outscraper ────────────────────────────────────────────────────────────────
+# ── Outscraper ───────────────────────────────────────────────────────────────────
 st.markdown("### Outscraper — Deep Reviews")
 st.caption(f"Free tier: {OUTSCRAPER_MONTHLY_LIMIT} reviews/month")
 
-reviews_used = o.get("reviews_used", 0)
+reviews_used      = o.get("reviews_used", 0)
 reviews_remaining = max(0, OUTSCRAPER_MONTHLY_LIMIT - reviews_used)
-outscraper_pct = min(reviews_used / OUTSCRAPER_MONTHLY_LIMIT, 1.0)
+outscraper_pct    = min(reviews_used / OUTSCRAPER_MONTHLY_LIMIT, 1.0)
 
 col1, col2, col3 = st.columns(3)
-col1.metric("Reviews Pulled", reviews_used)
-col2.metric("Remaining", reviews_remaining)
-col3.metric("Free Tier Used", f"{outscraper_pct*100:.1f}%")
+col1.metric("Reviews Pulled",    reviews_used)
+col2.metric("Remaining",         reviews_remaining)
+col3.metric("Free Tier Used",    f"{outscraper_pct*100:.1f}%")
 
 st.progress(
     outscraper_pct,
@@ -92,12 +91,12 @@ elif outscraper_pct > 0.8:
 
 st.markdown("---")
 
-# ── Adzuna ────────────────────────────────────────────────────────────────────
+# ── Adzuna ───────────────────────────────────────────────────────────────────────
 st.markdown("### Adzuna — Job Signals")
 st.caption(f"Evaluation-use limit: ~{ADZUNA_DAILY_LIMIT} calls/day")
 
 adzuna_calls = a.get("job_fetch_calls", 0)
-col1, col2 = st.columns(2)
+col1, col2   = st.columns(2)
 col1.metric("Job Fetch Calls This Month", adzuna_calls)
 col2.metric("Est. Calls Today", "—", help="Per-day tracking not yet implemented")
 
@@ -105,7 +104,7 @@ st.info("Adzuna data is used under evaluation terms. Review their commercial lic
 
 st.markdown("---")
 
-# ── Recent runs ───────────────────────────────────────────────────────────────
+# ── Recent runs ──────────────────────────────────────────────────────────────────
 st.markdown("### Recent Runs")
 st.caption("Last 20 runs")
 
@@ -137,7 +136,7 @@ else:
             "Details":            r.get("detail_calls", 0),
             "Outscraper Reviews": r.get("outscraper_reviews", 0),
             "Est. Google Cost":   f"${g_cost:.3f}",
-            "Stopped Early":      "⚠️ Yes" if r.get("stopped_early") else "No",
+            "Stopped Early":      "⚠️ Yes" if r.get("stopped_early") else "—",
         })
 
     st.dataframe(rows, use_container_width=True, hide_index=True)
