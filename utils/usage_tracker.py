@@ -238,7 +238,8 @@ def record_run(
     leads_found: int,
     stopped_early: bool = False,
     radius_miles: int | None = None,
-) -> None:
+) -> int | None:
+    """Record a pipeline run and return the new run's id (Supabase only; None otherwise)."""
     payload = {
         "timestamp":          datetime.utcnow().isoformat() + "Z",
         "location":           location,
@@ -256,27 +257,37 @@ def record_run(
 
     if _supabase_ok():
         try:
+            headers = _headers(prefer="return=representation")
             resp = requests.post(
                 f"{_SUPABASE_URL}/rest/v1/runs",
-                headers=_headers(),
+                headers=headers,
                 json=payload,
                 timeout=8,
             )
-            if not resp.ok:
+            if resp.ok:
+                rows = resp.json()
+                if rows and isinstance(rows, list):
+                    return rows[0].get("id")
+                return None
+            else:
                 # If radius_miles column doesn't exist yet, retry without it
                 if radius_miles is not None and resp.status_code in (400, 422):
                     payload_no_radius = {k: v for k, v in payload.items() if k != "radius_miles"}
                     resp2 = requests.post(
                         f"{_SUPABASE_URL}/rest/v1/runs",
-                        headers=_headers(),
+                        headers=_headers(prefer="return=representation"),
                         json=payload_no_radius,
                         timeout=8,
                     )
-                    if not resp2.ok:
+                    if resp2.ok:
+                        rows2 = resp2.json()
+                        if rows2 and isinstance(rows2, list):
+                            return rows2[0].get("id")
+                    else:
                         logger.warning(f"Supabase insert failed: {resp2.status_code} {resp2.text}")
                 else:
                     logger.warning(f"Supabase insert failed: {resp.status_code} {resp.text}")
-            return
+            return None
         except Exception as e:
             logger.warning(f"Supabase record_run failed: {e} — falling back to local")
 
@@ -290,6 +301,7 @@ def record_run(
     m["outscraper"]["reviews_used"] += outscraper_reviews
     state["runs"].append(payload)
     _local_save(state)
+    return None
 
 
 def get_exact_run(location: str, radius_miles: int) -> dict | None:
@@ -352,8 +364,12 @@ def save_lead(
     online_booking: bool,
     review_depth: str,
     reviews_json: str = None,  # -- Run: ALTER TABLE leads ADD COLUMN IF NOT EXISTS reviews_json TEXT;
+    run_id: int | None = None,
 ) -> None:
-    """Upsert a scored lead by place_id. Silent no-op when Supabase is not configured."""
+    """Insert a scored lead. Silent no-op when Supabase is not configured.
+
+    ``run_id`` links the lead to the run row for precise future lookups.
+    """
     if not _supabase_ok():
         return
     payload = {
@@ -376,6 +392,8 @@ def save_lead(
         "scored_at":      datetime.utcnow().isoformat() + "Z",
         "reviews_json":   reviews_json,
     }
+    if run_id is not None:
+        payload["run_id"] = run_id
     try:
         resp = requests.post(
             f"{_SUPABASE_URL}/rest/v1/leads",
@@ -437,9 +455,9 @@ def get_lead_run_info(place_id: str) -> dict | None:
             headers=_headers(prefer=""),
             params={
                 "place_id": f"eq.{place_id}",
-                "select": "id,run_location,scored_at",
-                "order": "scored_at.desc",
-                "limit": 1,
+                "select":   "id,run_location,scored_at",
+                "order":    "scored_at.desc",
+                "limit":    1,
             },
             timeout=8,
         )
@@ -455,3 +473,69 @@ def get_lead_run_info(place_id: str) -> dict | None:
     except Exception as e:
         logger.warning(f"get_lead_run_info failed: {e}")
     return None
+
+
+def get_leads_for_run(
+    run_location: str,
+    run_timestamp: str,
+    window_minutes: int = 15,
+) -> list[dict]:
+    """Fetch leads matching a run by location + time window.
+
+    Matches rows where ``run_location`` equals the run's location AND
+    ``scored_at`` falls within ±``window_minutes`` of ``run_timestamp``.
+    """
+    if not _supabase_ok():
+        return []
+    try:
+        from datetime import timedelta, timezone
+
+        ts = datetime.fromisoformat(run_timestamp.replace("Z", "+00:00"))
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+        lo = (ts - timedelta(minutes=window_minutes)).isoformat()
+        hi = (ts + timedelta(minutes=window_minutes)).isoformat()
+
+        resp = requests.get(
+            f"{_SUPABASE_URL}/rest/v1/leads",
+            headers=_headers(prefer=""),
+            params={
+                "run_location": f"eq.{run_location}",
+                "scored_at":    f"gte.{lo}",
+                "and":          f"(scored_at.lte.{hi})",
+                "order":        "pain_score.desc",
+                "limit":        500,
+            },
+            timeout=8,
+        )
+        if resp.ok:
+            return resp.json()
+        # Fall back to a wider fetch and filter client-side.
+        resp2 = requests.get(
+            f"{_SUPABASE_URL}/rest/v1/leads",
+            headers=_headers(prefer=""),
+            params={
+                "run_location": f"eq.{run_location}",
+                "scored_at":    f"gte.{lo}",
+                "order":        "pain_score.desc",
+                "limit":        500,
+            },
+            timeout=8,
+        )
+        if not resp2.ok:
+            return []
+        hi_dt = ts + timedelta(minutes=window_minutes)
+        results = []
+        for row in resp2.json():
+            try:
+                row_ts = datetime.fromisoformat(row["scored_at"].replace("Z", "+00:00"))
+                if row_ts.tzinfo is None:
+                    row_ts = row_ts.replace(tzinfo=timezone.utc)
+                if row_ts <= hi_dt:
+                    results.append(row)
+            except Exception:
+                continue
+        return results
+    except Exception as e:
+        logger.warning(f"get_leads_for_run failed: {e}")
+        return []
