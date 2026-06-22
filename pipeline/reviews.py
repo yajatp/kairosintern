@@ -1,29 +1,57 @@
 SIGNAL_LABELS = {
-    "front_desk": "Front Desk",
-    "phone": "Phone",
-    "scheduling": "Scheduling",
-    "insurance": "Insurance",
-    "paperwork": "Paperwork",
+    "front_desk": "front desk",
+    "phone": "phone",
+    "scheduling": "scheduling",
+    "insurance": "insurance",
+    "paperwork": "paperwork",
+    "digital_tools": "digital tools",
+    "extended_hours": "extended hours",
+    "active_marketing": "active marketing",
 }
 
 PAIN_KEYWORDS = {
     "phone": [
         "phone", "call", "answer", "voicemail", "hold", "callback", "busy signal",
         "rang", "picked up", "no one answers", "couldn't reach", "never answer",
+        "hang up", "disconnected", "transfer", "re-dial", "dial", "machine", "line",
+        "messages", "automated", "customer service", "operator", "voice mail", "ring",
     ],
     "scheduling": [
         "schedule", "appointment", "wait", "booking", "rescheduled", "cancelled",
-        "no show", "overbooked", "long wait", "waiting room",
+        "no show", "overbooked", "long wait", "waiting room", "reschedule", "cancel",
+        "book", "delay", "postpone", "slot", "time", "calendar", "wait list",
+        "waiting time", "in lobby", "hour wait", "minutes late", "tardy", "no-show",
+        "double book",
     ],
     "front_desk": [
         "front desk", "receptionist", "staff", "rude", "unhelpful", "unprofessional",
-        "disorganized", "chaotic", "confused",
+        "disorganized", "chaotic", "confused", "reception", "front office", "clerk",
+        "desk staff", "secretary", "check in", "check-in", "attitude", "impolite",
+        "abrupt", "dismissive", "unfriendly", "grouchy", "snarky",
     ],
     "insurance": [
         "insurance", "billing", "claim", "coverage", "verification", "denied",
-        "charged", "incorrect bill", "overcharged",
+        "charged", "incorrect bill", "overcharged", "pay", "cost", "copay",
+        "co-pay", "price", "out of pocket", "out-of-pocket", "covered",
+        "reimbursement", "estimate", "invoice", "fee", "charge", "payment",
+        "statement", "deductible", "financial", "bill", "in-network",
+        "out-of-network", "prior authorization",
     ],
-    "paperwork": ["paperwork", "forms", "intake", "documents", "records", "fax"],
+    "paperwork": [
+        "paperwork", "forms", "intake", "documents", "records", "fax",
+        "sign", "fill out", "clipboard", "portal intake", "questionnaire",
+        "medical history", "consent form", "registration",
+    ],
+    "digital_tools": [
+        "online booking", "text", "website", "portal", "email", "online scheduler",
+        "app", "link", "reminders", "weave", "dentrix", "ipad", "tablet", "confirmation text",
+    ],
+    "extended_hours": [
+        "saturday", "weekend", "evening", "late", "after hours", "sunday", "hours", "open late",
+    ],
+    "active_marketing": [
+        "ad", "marketing", "promotion", "referred", "google", "review", "stars", "recommend", "recommended",
+    ],
 }
 
 
@@ -37,12 +65,40 @@ def _normalize_review(raw: dict) -> dict:
     return {
         "text": raw.get("text") or "",
         "rating": raw.get("rating") or 0,
-        "author": raw.get("author_name") or "",
+        "author": raw.get("author") or raw.get("author_name") or "",
     }
 
 
+def expand_to_sentence(text: str, start: int, end: int) -> tuple[int, int]:
+    """Find the sentence boundaries around the span [start, end) in text."""
+    left = start
+    while left > 0:
+        char = text[left - 1]
+        if char in ('.', '!', '?', '\n'):
+            if left < len(text) and text[left].isspace():
+                break
+        left -= 1
+        
+    right = end
+    while right < len(text):
+        char = text[right]
+        if char in ('.', '!', '?', '\n'):
+            if right + 1 == len(text) or text[right + 1].isspace():
+                right += 1  # Include the sentence terminator
+                break
+        right += 1
+        
+    # Trim leading/trailing whitespace
+    while left < right and text[left].isspace():
+        left += 1
+    while right > left and text[right - 1].isspace():
+        right -= 1
+        
+    return left, right
+
+
 def _find_highlights(text: str, cat: str) -> list[dict]:
-    """Return non-overlapping highlight spans for all keywords of a category."""
+    """Return non-overlapping sentence-expanded highlights for all keywords of a category."""
     keywords = PAIN_KEYWORDS.get(cat, [])
     text_lower = text.lower()
     spans = []
@@ -50,10 +106,24 @@ def _find_highlights(text: str, cat: str) -> list[dict]:
         start = text_lower.find(kw)
         while start != -1:
             end = start + len(kw)
-            # Skip if overlapping with an existing span
-            if not any(s["start"] <= start < s["end"] or start <= s["start"] < end for s in spans):
-                spans.append({"start": start, "end": end, "category": cat})
+            
+            # Expand the matched keyword to sentence boundaries
+            sent_start, sent_end = expand_to_sentence(text, start, end)
+            
+            # Merge overlapping spans
+            overlapped = False
+            for s in spans:
+                if not (sent_end <= s["start"] or sent_start >= s["end"]):
+                    s["start"] = min(s["start"], sent_start)
+                    s["end"] = max(s["end"], sent_end)
+                    overlapped = True
+                    break
+            
+            if not overlapped:
+                spans.append({"start": sent_start, "end": sent_end, "category": cat})
+                
             start = text_lower.find(kw, start + 1)
+            
     return spans
 
 
@@ -62,6 +132,7 @@ def scan_reviews(reviews: list[dict]) -> dict:
 
     pain_count = 0
     triggered_categories = set()
+    complaint_categories = set()
     worst_snippet = ""
     worst_rating = 99
     matched_reviews = []
@@ -71,20 +142,30 @@ def scan_reviews(reviews: list[dict]) -> dict:
         full_text = review["text"]
         text_lower = full_text.lower()
 
-        if rating > 3:
-            continue
-
         matched_cats = []
         for cat, keywords in PAIN_KEYWORDS.items():
             if any(kw in text_lower for kw in keywords):
-                matched_cats.append(cat)
+                # For complaints/pain points, only match in low-rating reviews (<= 3)
+                if cat in ["front_desk", "phone", "scheduling", "insurance", "paperwork"]:
+                    if rating <= 3:
+                        matched_cats.append(cat)
+                else:
+                    # For positive/neutral signals, match in any review
+                    matched_cats.append(cat)
 
         if matched_cats:
-            pain_count += 1
+            has_complaint = any(c in ["front_desk", "phone", "scheduling", "insurance", "paperwork"] for c in matched_cats)
+            if has_complaint:
+                pain_count += 1
+                if rating < worst_rating:
+                    worst_rating = rating
+                    worst_snippet = full_text[:200]
+                # Keep track of complaint categories
+                complaint_categories.update(
+                    [c for c in matched_cats if c in ["front_desk", "phone", "scheduling", "insurance", "paperwork"]]
+                )
+
             triggered_categories.update(matched_cats)
-            if rating < worst_rating:
-                worst_rating = rating
-                worst_snippet = full_text[:200]
 
             # Build highlights across all matched categories
             all_highlights = []
@@ -94,11 +175,12 @@ def scan_reviews(reviews: list[dict]) -> dict:
             matched_reviews.append({
                 "text": full_text[:1000],
                 "rating": rating,
+                "author": review.get("author") or "",
                 "matched_categories": matched_cats,
                 "highlights": all_highlights,
             })
 
-    cats = sorted(triggered_categories)
+    cats = sorted(complaint_categories)
     evidence_parts = []
     if pain_count:
         evidence_parts.append(f"{pain_count} review(s) flagged: {', '.join(cats)}")

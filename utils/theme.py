@@ -61,8 +61,16 @@ html, body, .stApp {{
     display: none !important;
     border: none !important;
     height: 0 !important;
+    min-height: 0 !important;
+    max-height: 0 !important;
     margin: 0 !important;
     padding: 0 !important;
+    overflow: hidden !important;
+}}
+/* Nuke the wrapper that Streamlit renders around stSidebarNav — it retains height even when children are hidden */
+[data-testid="stSidebar"] > div > div > div:has([data-testid="stSidebarNav"]) {{
+    display: none !important;
+    height: 0 !important;
     overflow: hidden !important;
 }}
 
@@ -74,7 +82,7 @@ html, body, .stApp {{
     outline: none !important;
 }}
 [data-testid="stSidebar"] [data-testid="stPageLink"]:first-child {{
-    margin-top: 6px !important;
+    margin-top: 0 !important;
 }}
 [data-testid="stSidebar"] [data-testid="stPageLink"] > div,
 [data-testid="stSidebar"] [data-testid="stPageLink"] > div > div {{
@@ -99,6 +107,12 @@ html, body, .stApp {{
 [data-testid="stSidebar"] [data-testid="stPageLink"] a[aria-current="page"] {{
     background: {bg_hover} !important;
     color: {text} !important; font-weight: 500 !important;
+}}
+
+/* ── Sidebar nav divider (between logo and nav links) ── */
+.sidebar-nav-divider {{
+    border-top: 1px solid {border};
+    margin: 0 0 13px 0;
 }}
 
 /* ── Sidebar dividers ── */
@@ -172,6 +186,12 @@ html, body, .stApp {{
     color: #ffffff !important;
     border-color: {text} !important;
     font-weight: 600 !important; box-shadow: none !important;
+}}
+.stButton > button[kind="primary"] *,
+.stButton > button[kind="primary"] p,
+.stButton > button[kind="primary"] span,
+.stButton > button[kind="primary"] div {{
+    color: #ffffff !important;
 }}
 .stButton > button[kind="primary"]:hover {{ opacity: 0.84 !important; }}
 .stButton > button[kind="secondary"] {{

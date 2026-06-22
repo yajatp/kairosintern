@@ -30,7 +30,7 @@ OUTSCRAPER_API_KEY    = _get_secret("OUTSCRAPER_API_KEY")
 
 from pipeline.places import geocode, search_clinics, get_clinic_details
 from pipeline.jobs import fetch_adzuna_jobs, match_clinic_to_job
-from pipeline.reviews import scan_reviews, SIGNAL_LABELS
+from pipeline.reviews import scan_reviews
 from pipeline.outscraper_reviews import fetch_deep_reviews
 from pipeline.classifier import classify_clinic
 from pipeline.scorer import (
@@ -43,11 +43,9 @@ from pipeline.scorer import (
 from pipeline.website import check_website
 from utils.helpers import extract_city, get_hours_summary
 from utils.usage_tracker import (
-    get_remaining_budget,
     record_usage,
     record_run,
     save_lead,
-    OUTSCRAPER_MONTHLY_LIMIT,
     get_exact_run,
     get_known_place_ids,
     get_lead_run_info,
@@ -152,7 +150,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
     try:
         log("Geocoding location...")
         try:
-            lat, lng = geocode(location, GOOGLE_PLACES_API_KEY)
+            lat, lng, resolved_location = geocode(location, GOOGLE_PLACES_API_KEY)
             _calls["geocode"] += 1
         except ValueError as e:
             p["error"] = str(e)
@@ -177,6 +175,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
 
         log("Fetching job postings from Adzuna...")
         jobs = fetch_adzuna_jobs(location, ADZUNA_APP_ID, ADZUNA_APP_KEY)
+        location = resolved_location
         _calls["adzuna"] += 1
         p["progress"] = 30
 
@@ -279,9 +278,6 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 if not OUTSCRAPER_API_KEY:
                     leads[idx]["clinic_data"]["enrichment_note"] = "Outscraper not configured — Places sample only"
                     continue
-                if get_remaining_budget() < OUTSCRAPER_REVIEWS_PER_CALL:
-                    leads[idx]["clinic_data"]["enrichment_note"] = "Monthly budget reached — Places sample only"
-                    continue
 
                 deep_reviews = fetch_deep_reviews(leads[idx]["place_id"], OUTSCRAPER_API_KEY, OUTSCRAPER_REVIEWS_PER_CALL)
                 calls_made += 1
@@ -348,11 +344,15 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
             matched_reviews = review_data.get("matched_reviews", [])
             reviews_json = json.dumps(matched_reviews) if matched_reviews else None
 
+            from datetime import datetime as _dt
             final_leads.append({
+                "City":                location,  # location is already the resolved_location format
+                "Search Radius":       f"{radius_miles} mi",
+                "Run Date":            _dt.utcnow().strftime("%Y-%m-%d"),
+                "Place ID":            lead["place_id"],
                 "Clinic Name":         details.get("name", ""),
                 "Classification":      classification,
                 "Specialty":           specialty,
-                "City":                extract_city(details.get("formatted_address", "")),
                 "Address":             details.get("formatted_address", ""),
                 "Website":             details.get("website", ""),
                 "Phone Number":        details.get("formatted_phone_number", ""),
@@ -375,6 +375,36 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 "reviews_json":        reviews_json,
             })
 
+        # Record the run first so we can link saved leads to the run_id!
+        run_id = None
+        try:
+            run_id = record_run(
+                location=location,
+                geocode_calls=_calls["geocode"],
+                search_calls=_calls["search"],
+                detail_calls=_calls["detail"],
+                adzuna_calls=_calls["adzuna"],
+                outscraper_reviews=_calls["outscraper_reviews"],
+                clinics_found=len(leads),
+                leads_found=len(final_leads),
+                stopped_early=p.get("stop_requested", False),
+                radius_miles=radius_miles,
+            )
+            p["last_run_id"] = run_id
+        except Exception as e:
+            pass
+
+        for lead, fl in zip(leads, final_leads):
+            details        = lead["details"]
+            clinic_data    = lead["clinic_data"]
+            signals        = lead["signals"]
+            specialty      = lead["specialty"]
+            pain_score     = lead["pain_score"]
+            classification = lead["classification"]
+            outreach_angle = fl["Outreach Angle"]
+            review_depth_label = fl["Review Data Depth"]
+            reviews_json   = fl["reviews_json"]
+
             save_lead(
                 place_id=lead["place_id"],
                 run_location=location,
@@ -393,31 +423,43 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 online_booking=bool(clinic_data.get("has_online_booking")),
                 review_depth=review_depth_label,
                 reviews_json=reviews_json,
+                run_id=run_id,
             )
 
         p["leads_df"] = pd.DataFrame(final_leads)
         p["progress"] = 100
         log(f"Done — {len(final_leads)} leads collected.")
 
+        try:
+            import os
+            if os.path.exists("/Users/yajatparmar"):
+                from datetime import datetime as _dt
+                with open("test_runs_log.txt", "a") as f:
+                    ts_str = _dt.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+                    f.write(f"- Run: {location} at {radius_miles}mi radius, found {len(final_leads)} leads on {ts_str}\n")
+        except Exception:
+            pass
+
     except Exception as e:
         p["error"] = f"An unexpected error occurred: {e}"
     finally:
-        try:
-            run_id = record_run(
-                location=location,
-                geocode_calls=_calls["geocode"],
-                search_calls=_calls["search"],
-                detail_calls=_calls["detail"],
-                adzuna_calls=_calls["adzuna"],
-                outscraper_reviews=_calls["outscraper_reviews"],
-                clinics_found=len(leads),
-                leads_found=len(p["leads_df"]) if p.get("leads_df") is not None else 0,
-                stopped_early=p.get("stop_requested", False),
-                radius_miles=radius_miles,
-            )
-            p["last_run_id"] = run_id
-        except Exception:
-            pass
+        if not p.get("last_run_id"):
+            try:
+                run_id = record_run(
+                    location=location,
+                    geocode_calls=_calls["geocode"],
+                    search_calls=_calls["search"],
+                    detail_calls=_calls["detail"],
+                    adzuna_calls=_calls["adzuna"],
+                    outscraper_reviews=_calls["outscraper_reviews"],
+                    clinics_found=len(leads),
+                    leads_found=len(p["leads_df"]) if p.get("leads_df") is not None else 0,
+                    stopped_early=p.get("stop_requested", False),
+                    radius_miles=radius_miles,
+                )
+                p["last_run_id"] = run_id
+            except Exception:
+                pass
 
         # Push leads to Google Sheets (best-effort, non-blocking)
         try:
@@ -492,6 +534,8 @@ def _reverse_geocode(lat: float, lng: float, api_key: str):
 # ── Sidebar controls ────────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("Location")
+    if "_map_clicked_location" in st.session_state:
+        st.session_state["location_input"] = st.session_state.pop("_map_clicked_location")
     if "location_input" not in st.session_state:
         st.session_state["location_input"] = ""
     location = st.text_input(
@@ -502,11 +546,37 @@ with st.sidebar:
         key="location_input",
     )
 
+    if "radius_miles_slider" not in st.session_state:
+        st.session_state["radius_miles_slider"] = 25
+
+    _temp_center_lat, _temp_center_lng = 39.5, -98.35
+    if location and len(location) >= 3 and GOOGLE_PLACES_API_KEY:
+        _geo_temp = _geocode_for_map(location, GOOGLE_PLACES_API_KEY)
+        if _geo_temp:
+            _temp_center_lat, _temp_center_lng, _ = _geo_temp
+
+    _curr_rad = st.session_state["radius_miles_slider"]
+    _dynamic_map_key = f"folium_map_{_temp_center_lat}_{_temp_center_lng}_{_curr_rad}"
+
+    if _dynamic_map_key in st.session_state and st.session_state[_dynamic_map_key] is not None:
+        _map_state = st.session_state[_dynamic_map_key]
+        if isinstance(_map_state, dict) and "zoom" in _map_state:
+            _map_zoom_val = _map_state["zoom"]
+            if _map_zoom_val >= 11:
+                _new_rad = 10
+            elif _map_zoom_val == 10:
+                _new_rad = 25
+            else:
+                _new_rad = 50
+            if _new_rad != _curr_rad:
+                st.session_state["radius_miles_slider"] = _new_rad
+                st.rerun()
+
     st.markdown("Search Radius")
     radius_miles = st.select_slider(
         "Radius",
         options=[10, 25, 50],
-        value=25,
+        key="radius_miles_slider",
         label_visibility="collapsed",
         disabled=_p["running"],
         format_func=lambda x: f"{x} mi",
@@ -520,15 +590,16 @@ with st.sidebar:
         _geo = _geocode_for_map(location, GOOGLE_PLACES_API_KEY)
         if _geo:
             _map_center_lat, _map_center_lng, _city_label = _geo
-            _map_zoom = 10
+            _zoom_map = {10: 11, 25: 10, 50: 9}
+            _map_zoom = _zoom_map.get(radius_miles, 10)
             _map_marker = (_map_center_lat, _map_center_lng, _city_label)
 
     _m = folium.Map(
         location=[_map_center_lat, _map_center_lng],
         zoom_start=_map_zoom,
         tiles="OpenStreetMap",
-        zoom_control=False,
-        scrollWheelZoom=False,
+        zoom_control=True,
+        scrollWheelZoom=True,
         attributionControl=False,
     )
 
@@ -552,7 +623,8 @@ with st.sidebar:
         _m,
         height=220,
         use_container_width=True,
-        returned_objects=["last_clicked"],
+        returned_objects=["last_clicked", "zoom"],
+        key=_dynamic_map_key,
     )
 
     # Click-to-select: reverse geocode the clicked point
@@ -560,11 +632,14 @@ with st.sidebar:
         _clicked = _map_data["last_clicked"]
         _clicked_lat = _clicked.get("lat")
         _clicked_lng = _clicked.get("lng")
-        if _clicked_lat is not None and _clicked_lng is not None and GOOGLE_PLACES_API_KEY:
-            _rev = _reverse_geocode(_clicked_lat, _clicked_lng, GOOGLE_PLACES_API_KEY)
-            if _rev and _rev != st.session_state.get("location_input", ""):
-                st.session_state["location_input"] = _rev
-                st.rerun()
+        last_processed = st.session_state.get("_last_clicked_processed")
+        if last_processed != (_clicked_lat, _clicked_lng):
+            st.session_state["_last_clicked_processed"] = (_clicked_lat, _clicked_lng)
+            if _clicked_lat is not None and _clicked_lng is not None and GOOGLE_PLACES_API_KEY:
+                _rev = _reverse_geocode(_clicked_lat, _clicked_lng, GOOGLE_PLACES_API_KEY)
+                if _rev and _rev != st.session_state.get("location_input", ""):
+                    st.session_state["_map_clicked_location"] = _rev
+                    st.rerun()
 
     st.markdown("Max Results")
     max_results = st.select_slider(
@@ -637,14 +712,10 @@ with st.sidebar:
 
     st.markdown("---")
 
-    remaining_budget = get_remaining_budget()
-    pct_used = 1.0 - remaining_budget / OUTSCRAPER_MONTHLY_LIMIT
-    if remaining_budget == 0:
-        st.error("Outscraper monthly limit reached — deep scans disabled.")
-    elif pct_used >= 0.8:
-        st.warning(f"Outscraper: {remaining_budget} reviews left ({int(pct_used*100)}% used)")
-    else:
-        st.caption(f"Outscraper: {remaining_budget}/{OUTSCRAPER_MONTHLY_LIMIT} reviews remaining")
+    from utils.usage_tracker import get_monthly_stats
+    _stats = get_monthly_stats()
+    _reviews_used = _stats.get("outscraper", {}).get("reviews_used", 0)
+    st.caption(f"Outscraper: {_reviews_used} reviews used this month")
 
 
 # ── Page header ─────────────────────────────────────────────────────────────────
@@ -665,6 +736,23 @@ if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
 if not OUTSCRAPER_API_KEY:
     st.info("Outscraper not configured — deep review scans will be skipped.")
 
+
+@st.dialog("Run Already Exists")
+def confirm_run_dialog(location_str, radius, date_str):
+    st.write(
+        f"You already searched **{location_str}** at a **{radius}mi radius** on **{date_str}**."
+    )
+    st.write("Would you like to proceed anyway or cancel?")
+    col_cancel, col_proceed = st.columns(2)
+    with col_cancel:
+        if st.button("Cancel Search", use_container_width=True):
+            st.rerun()
+    with col_proceed:
+        if st.button("Proceed Anyway", use_container_width=True, type="primary"):
+            st.session_state["_overlap_run_anyway"] = True
+            st.rerun()
+
+
 # ── Pipeline trigger ─────────────────────────────────────────────────────────────
 if find_leads:
     if not location.strip():
@@ -683,18 +771,7 @@ if find_leads:
             prior_date_str = prior_ts.strftime("%b %d, %Y")
         except Exception:
             prior_date_str = prior_run.get("timestamp", "")
-        st.warning(
-            f"You already searched **{location.strip()}** at a **{radius_miles}mi radius** "
-            f"on {prior_date_str}. Viewing the same results again?"
-        )
-        col_hist, col_run = st.columns(2)
-        with col_hist:
-            if st.button("Go to History", use_container_width=True):
-                st.switch_page("pages/history.py")
-        with col_run:
-            if st.button("Run Anyway", use_container_width=True, type="primary"):
-                st.session_state["_overlap_run_anyway"] = True
-                st.rerun()
+        confirm_run_dialog(location.strip(), radius_miles, prior_date_str)
         st.stop()
 
     # Clear the "run anyway" flag so it doesn't persist to future searches
@@ -753,7 +830,7 @@ if leads_df is not None and not _p["running"]:
             from datetime import datetime as _dt
             with st.container():
                 st.info(
-                    f"↩ {len(skipped)} clinic{'s' if len(skipped) != 1 else ''} "
+                    f":material/history: {len(skipped)} clinic{'s' if len(skipped) != 1 else ''} "
                     f"{'were' if len(skipped) != 1 else 'was'} already in your database "
                     f"and skipped (saved ~{len(skipped)} API call{'s' if len(skipped) != 1 else ''})"
                 )
@@ -776,6 +853,7 @@ if leads_df is not None and not _p["running"]:
                         if run_id is not None:
                             if st.button("View in History", key=f"skip_{sc['place_id']}", use_container_width=True):
                                 st.session_state["history_target_run"] = run_id
+                                st.session_state["history_target_lead_place_id"] = sc['place_id']
                                 st.switch_page("pages/history.py")
 
         # ── Stat blocks ─────────────────────────────
@@ -954,104 +1032,8 @@ if leads_df is not None and not _p["running"]:
                 label = f"{name}  ·  {city}  ·  Score {score}{rating_str}"
 
                 with st.expander(label, expanded=False):
-                    col_a, col_b = st.columns([1, 1])
-
-                    with col_a:
-                        phone   = row.get("Phone Number", "")
-                        website = row.get("Website", "")
-                        if phone:
-                            st.markdown(f"**Phone** &nbsp; {phone}")
-                        if website:
-                            disp = (website[:52] + "…") if len(website) > 52 else website
-                            st.markdown(f"**Website** &nbsp; [{disp}]({website})")
-
-                        st.markdown(f"**Address** &nbsp; {row['Address']}")
-                        st.markdown(f"**Specialty** &nbsp; {row['Specialty']}  ·  {row['Classification']}")
-
-                        rating_full = row.get("Google Rating", "")
-                        total_rev   = int(row.get("Total Reviews", 0) or 0)
-                        if rating_full:
-                            st.markdown(f"**Rating** &nbsp; {rating_full} / 5 ({total_rev:,} reviews)")
-
-                        hours = row.get("Hours Summary", "")
-                        if hours:
-                            st.markdown(f"**Hours** &nbsp; {hours}")
-
-                        flags = []
-                        if row.get("Extended Hours") == "Yes":  flags.append("Extended hours")
-                        if row.get("Online Booking") == "Yes":  flags.append("Online booking")
-                        if flags:
-                            st.markdown(f"**Features** &nbsp; {' · '.join(flags)}")
-
-                        depth = row.get("Review Data Depth", "")
-                        if depth:
-                            st.caption(f"Review depth: {depth}")
-
-                    with col_b:
-                        st.markdown(_pain_badge(score), unsafe_allow_html=True)
-                        st.markdown("")
-
-                        signals = [
-                            s for s in row.get("Pain Signal Type", "").split(" | ")
-                            if s and s != "None detected"
-                        ]
-                        if signals:
-                            st.markdown("**Pain Signals**")
-                            for sig in signals:
-                                st.markdown(f"— {sig}")
-                        else:
-                            st.caption("No pain signals detected")
-
-                        outreach = row.get("Outreach Angle", "")
-                        if outreach:
-                            st.markdown("")
-                            st.markdown("**Outreach Angle**")
-                            st.markdown(f"_{outreach}_")
-
-                        evidence = row.get("Evidence / Source", "")
-                        if evidence and evidence != "No direct evidence found":
-                            st.markdown("")
-                            st.markdown("**Evidence**")
-                            for part in evidence.split(" | ")[:2]:
-                                if part.strip():
-                                    st.caption(part.strip())
-
-                        # ── Review drill-down ────────────────────────────
-                        raw_rj = row.get("reviews_json")
-                        if raw_rj:
-                            try:
-                                all_matched = json.loads(raw_rj)
-                            except (ValueError, TypeError):
-                                all_matched = []
-
-                            # Group reviews by category
-                            cat_reviews: dict[str, list] = {}
-                            for rev in all_matched:
-                                for cat in rev.get("matched_categories", []):
-                                    cat_reviews.setdefault(cat, []).append(rev)
-
-                            if cat_reviews:
-                                st.markdown("")
-                                st.markdown("**Review Drill-Down**")
-                                for cat, cat_revs in cat_reviews.items():
-                                    label = SIGNAL_LABELS.get(cat, cat.replace("_", " ").title())
-                                    with st.expander(f"🔍 {label}  ({len(cat_revs)} reviews)", expanded=False):
-                                        st.markdown(
-                                            f"**Summary:** Found {len(cat_revs)} review(s) "
-                                            f"mentioning {label} issues."
-                                        )
-                                        st.divider()
-                                        for rev in cat_revs:
-                                            rating_val = rev.get("rating", 0)
-                                            stars = "★" * rating_val + "☆" * (5 - rating_val)
-                                            st.markdown(f"**{stars}**")
-                                            highlighted = apply_highlights(
-                                                rev.get("text", ""),
-                                                rev.get("highlights", []),
-                                                cat,
-                                            )
-                                            st.markdown(highlighted, unsafe_allow_html=True)
-                                            st.divider()
+                    from utils.helpers import render_lead_card
+                    render_lead_card(row)
 
 # ── Empty state ──────────────────────────────────────────────────────────────────
 elif leads_df is None and not _p["running"] and not _p["error"]:

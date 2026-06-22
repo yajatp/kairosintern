@@ -30,7 +30,7 @@ st.markdown(
 st.divider()
 
 # ── Section 1: What is Kairos? ───────────────────────────────────────────────────
-st.markdown("### 🎯 What is Kairos?")
+st.markdown("### What is Kairos?")
 st.info(
     "Kairos helps dental sales reps find **high-signal independent practices** that are struggling "
     "with admin and scheduling overhead — the ones most likely to benefit from your solution. "
@@ -41,7 +41,7 @@ st.info(
 st.divider()
 
 # ── Section 2: Quick Start ───────────────────────────────────────────────────────
-st.markdown("### 🚀 Quick Start")
+st.markdown("### Quick Start")
 
 st.markdown(
     """
@@ -177,7 +177,7 @@ st.markdown(
 st.divider()
 
 # ── Section 3: Pain Signal Glossary ─────────────────────────────────────────────
-st.markdown("### 🔍 Pain Signal Glossary")
+st.markdown("### Pain Signal Glossary")
 st.markdown(
     "<p style='color:#6b6f76; font-size:13px; margin-bottom:16px;'>"
     "These are the signals Kairos detects from reviews, job postings, and website data."
@@ -186,12 +186,12 @@ st.markdown(
 )
 
 _signals = [
-    ("🖥", "Front Desk", "#ede9fe", "#6d28d9", "Complaints about receptionist attitude, disorganization, or rudeness"),
-    ("📞", "Phone", "#dbeafe", "#1e40af", "Patients can't reach the office — calls go unanswered"),
-    ("📅", "Scheduling", "#fce7f3", "#9d174d", "Appointment booking problems, long waits, or cancellations"),
-    ("🧾", "Insurance", "#fff7ed", "#c2410c", "Billing errors, coverage confusion, or incorrect charges"),
-    ("📄", "Paperwork", "#fefce8", "#854d0e", "Intake form issues, records management, or fax problems"),
-    ("💼", "Hiring", "#dcfce7", "#15803d", "Active job posting for admin/front-desk roles (strong signal)"),
+    ("", "Front Desk", "#ede9fe", "#6d28d9", "Complaints about receptionist attitude, disorganization, or rudeness"),
+    ("", "Phone", "#dbeafe", "#1e40af", "Patients can't reach the office — calls go unanswered"),
+    ("", "Scheduling", "#fce7f3", "#9d174d", "Appointment booking problems, long waits, or cancellations"),
+    ("", "Insurance", "#fff7ed", "#c2410c", "Billing errors, coverage confusion, or incorrect charges"),
+    ("", "Paperwork", "#fefce8", "#854d0e", "Intake form issues, records management, or fax problems"),
+    ("", "Hiring", "#dcfce7", "#15803d", "Active job posting for admin/front-desk roles (strong signal)"),
 ]
 
 _sig_col1, _sig_col2 = st.columns(2)
@@ -210,7 +210,7 @@ for i, (icon, name, bg, color, desc) in enumerate(_signals):
 st.divider()
 
 # ── Section 4: Practice Classification ──────────────────────────────────────────
-st.markdown("### 🏥 Practice Classification")
+st.markdown("### Practice Classification")
 
 _class_cols = st.columns(4)
 _classifications = [
@@ -233,7 +233,7 @@ for col, (label, bg, color, desc) in zip(_class_cols, _classifications):
 st.divider()
 
 # ── Section 5: History & Overlap Detection ───────────────────────────────────────
-st.markdown("### 📂 History & Overlap Detection")
+st.markdown("### History & Overlap Detection")
 
 _hist_col1, _hist_col2 = st.columns(2)
 with _hist_col1:
@@ -251,15 +251,15 @@ with _hist_col2:
 st.divider()
 
 # ── Section 6: Tips & Best Practices ────────────────────────────────────────────
-st.markdown("### 💡 Tips & Best Practices")
+st.markdown("### Tips & Best Practices")
 
 _tips = [
-    ("🗺", "Start with 25 mi radius for dense metro areas, 50 mi for rural or suburban areas."),
-    ("🔥", "High Priority leads (score 6+) = reach out this week — they are actively hurting."),
-    ("💼", "Check job board signals: a practice hiring front desk staff is actively feeling the pain."),
-    ("⭐", "Look at review counts: 75+ reviews at 4★+ means high active patient volume — more ops load."),
-    ("📊", "Export to XLSX for color-coded scores you can share with your team or manager."),
-    ("🔄", "Re-run searches monthly — pain signals change as practices hire, fire, and grow."),
+    ("-", "Start with 25 mi radius for dense metro areas, 50 mi for rural or suburban areas."),
+    ("-", "High Priority leads (score 6+) = reach out this week — they are actively hurting."),
+    ("-", "Check job board signals: a practice hiring front desk staff is actively feeling the pain."),
+    ("-", "Look at review counts: 75+ reviews at 4★+ means high active patient volume — more ops load."),
+    ("-", "Export to XLSX for color-coded scores you can share with your team or manager."),
+    ("-", "Re-run searches monthly — pain signals change as practices hire, fire, and grow."),
 ]
 
 for icon, tip in _tips:

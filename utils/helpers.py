@@ -1,8 +1,46 @@
 from __future__ import annotations
 
 import re
+import json
+import html
+from datetime import datetime, timezone
 
 import streamlit as st
+from pipeline.reviews import SIGNAL_LABELS
+
+def safe_parse_datetime(ts_str: str) -> datetime:
+    """Safely parse ISO datetime string, handling varying microsecond lengths for Python 3.9 compatibility."""
+    cleaned = ts_str.strip().replace("Z", "+00:00")
+    if "+" in cleaned:
+        dt_part, tz_part = cleaned.split("+", 1)
+        tz_part = "+" + tz_part
+    elif "-" in cleaned and cleaned.count("-") >= 3:
+        idx = cleaned.rfind("-")
+        dt_part = cleaned[:idx]
+        tz_part = cleaned[idx:]
+    else:
+        dt_part = cleaned
+        tz_part = ""
+        
+    if "." in dt_part:
+        base, micro = dt_part.split(".", 1)
+        micro_digits = re.findall(r'\d+', micro)
+        if micro_digits:
+            micro_str = micro_digits[0][:6].ljust(6, '0')
+            dt_part = f"{base}.{micro_str}"
+        else:
+            dt_part = base
+            
+    try:
+        return datetime.fromisoformat(dt_part + tz_part)
+    except ValueError:
+        try:
+            if "." in dt_part:
+                dt_part = dt_part.split(".", 1)[0]
+            return datetime.fromisoformat(dt_part + tz_part)
+        except Exception:
+            return datetime.now(timezone.utc)
+
 
 _STRIP_WORDS = {
     "dental", "dentistry", "smile", "smiles", "family", "associates",
@@ -64,6 +102,75 @@ def _pain_badge(val: float) -> str:
         f"Pain Score {val}"
         f"</span>"
     )
+
+
+# ── Review highlighting & summary helpers ──────────────────────────────────────
+
+def apply_highlights(text: str, highlights: list, category: str) -> str:
+    """Wrap keyword spans for the given category in <mark> tags.
+
+    Other-category highlights are ignored so each expander only marks its own
+    signals. Overlapping spans are skipped (first match wins).
+    """
+    spans = sorted(
+        [h for h in highlights if h["category"] == category],
+        key=lambda h: h["start"],
+    )
+    out_parts = []
+    cursor = 0
+    for span in spans:
+        s, e = span["start"], span["end"]
+        if s < cursor:
+            continue  # skip overlapping
+        out_parts.append(html.escape(text[cursor:s]))
+        out_parts.append(
+            f'<mark style="background:#fef08a;padding:1px 3px;border-radius:3px">'
+            f'{html.escape(text[s:e])}</mark>'
+        )
+        cursor = e
+    out_parts.append(html.escape(text[cursor:]))
+    return "".join(out_parts)
+
+
+def generate_category_summary(category: str, reviews: list[dict]) -> str:
+    """Compile a detailed summary of complaining keywords and actual quotes."""
+    from pipeline.reviews import PAIN_KEYWORDS
+    keywords = PAIN_KEYWORDS.get(category, [])
+    label = SIGNAL_LABELS.get(category, category.replace("_", " ").title())
+
+    # Find which keywords actually matched
+    matched_kws = set()
+    sentences = []
+
+    for r in reviews:
+        text = r.get("text", "")
+        text_lower = text.lower()
+        # Find keywords matched in this review
+        for kw in keywords:
+            if kw in text_lower:
+                matched_kws.add(kw)
+
+        # Split into sentences to find the most relevant one
+        for sentence in re.split(r'[.!?\n]+', text):
+            sentence_clean = sentence.strip()
+            if not sentence_clean:
+                continue
+            sentence_lower = sentence_clean.lower()
+            if any(kw in sentence_lower for kw in keywords):
+                # Avoid duplicates and check length
+                if sentence_clean not in sentences and len(sentence_clean) > 5 and len(sentence_clean) < 250:
+                    sentences.append(sentence_clean)
+
+    kw_str = ", ".join(f"'{k}'" for k in sorted(matched_kws))
+    summary = f"**{label.title()} Summary:** Found {len(reviews)} review(s) mentioning {label.lower()} indicators ({kw_str}).\n\n"
+    if sentences:
+        summary += "Key patient feedback:\n"
+        for s in sentences[:3]:  # Top 3 quotes
+            s_clean = s.replace('"', '').replace("'", "").strip()
+            summary += f"- *\"{s_clean}\"*\n"
+    else:
+        summary += "*No specific quotes extracted, please see the reviews below.*"
+    return summary
 
 
 # ── Shared lead card renderer ─────────────────────────────────────────────────
@@ -165,3 +272,46 @@ def render_lead_card(row: dict) -> None:
             for part in str(evidence).split(" | ")[:2]:
                 if part.strip():
                     st.caption(part.strip())
+
+        # ── Review Drill-Down ─────────────────────────────────────────────
+        raw_rj = _get("reviews_json", "reviews_json", None)
+        all_matched = []
+        if raw_rj:
+            if isinstance(raw_rj, str):
+                try:
+                    all_matched = json.loads(raw_rj)
+                except (ValueError, TypeError):
+                    all_matched = []
+            elif isinstance(raw_rj, list):
+                all_matched = raw_rj
+
+        # Group reviews by category
+        cat_reviews: dict[str, list] = {}
+        for rev in all_matched:
+            for cat in rev.get("matched_categories", []):
+                cat_reviews.setdefault(cat, []).append(rev)
+
+        if cat_reviews:
+            st.markdown("")
+            st.markdown("**Review Drill-Down**")
+            for cat, cat_revs in cat_reviews.items():
+                label = SIGNAL_LABELS.get(cat, cat.replace("_", " ").title())
+                cat_summary = generate_category_summary(cat, cat_revs)
+                with st.expander(f":material/search: {label.title()}  ({len(cat_revs)} reviews)", expanded=False):
+                    st.markdown(cat_summary)
+                    st.divider()
+                    for rev in cat_revs:
+                        rating_val = rev.get("rating", 0)
+                        stars = "★" * rating_val + "☆" * (5 - rating_val)
+                        author_name = rev.get("author") or "Anonymous Patient"
+                        st.markdown(f"**{stars}** · *{author_name}*")
+                        highlighted = apply_highlights(
+                            rev.get("text", ""),
+                            rev.get("highlights", []),
+                            cat,
+                        )
+                        st.markdown(highlighted, unsafe_allow_html=True)
+                        st.divider()
+        else:
+            st.markdown("")
+            st.info(":material/info: Review drill-down not available for this legacy lead.")

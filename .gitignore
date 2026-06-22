@@ -4,3 +4,7 @@ __pycache__/
 .DS_Store
 venv/
 outscraper_usage.json
+api_usage.json
+kairos-*.json
+test_runs_log.txt
+test_map.html

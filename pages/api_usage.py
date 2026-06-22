@@ -7,7 +7,6 @@ from utils.usage_tracker import (
     get_run_history,
     estimated_google_cost,
     using_supabase,
-    OUTSCRAPER_MONTHLY_LIMIT,
     GOOGLE_MONTHLY_CREDIT_USD,
     GOOGLE_GEOCODE_COST,
     GOOGLE_SEARCH_COST,
@@ -68,26 +67,14 @@ st.markdown("---")
 
 # ── Outscraper ───────────────────────────────────────────────────────────────────
 st.markdown("### Outscraper — Deep Reviews")
-st.caption(f"Free tier: {OUTSCRAPER_MONTHLY_LIMIT} reviews/month")
 
-reviews_used      = o.get("reviews_used", 0)
-reviews_remaining = max(0, OUTSCRAPER_MONTHLY_LIMIT - reviews_used)
-outscraper_pct    = min(reviews_used / OUTSCRAPER_MONTHLY_LIMIT, 1.0)
+reviews_used = o.get("reviews_used", 0)
 
-col1, col2, col3 = st.columns(3)
-col1.metric("Reviews Pulled",    reviews_used)
-col2.metric("Remaining",         reviews_remaining)
-col3.metric("Free Tier Used",    f"{outscraper_pct*100:.1f}%")
+col1, col2 = st.columns(2)
+col1.metric("Reviews Pulled This Month", reviews_used)
+col2.metric("Month", datetime.now().strftime("%B %Y"))
 
-st.progress(
-    outscraper_pct,
-    text=f"{reviews_used} / {OUTSCRAPER_MONTHLY_LIMIT} reviews ({outscraper_pct*100:.1f}%)",
-)
-
-if reviews_remaining == 0:
-    st.error("Monthly Outscraper budget exhausted — deep scans are disabled until next month.")
-elif outscraper_pct > 0.8:
-    st.warning(f"Only {reviews_remaining} Outscraper reviews left this month.")
+st.caption("No monthly cap — deep scans run freely. Usage tracked for visibility.")
 
 st.markdown("---")
 
@@ -136,7 +123,7 @@ else:
             "Details":            r.get("detail_calls", 0),
             "Outscraper Reviews": r.get("outscraper_reviews", 0),
             "Est. Google Cost":   f"${g_cost:.3f}",
-            "Stopped Early":      "⚠️ Yes" if r.get("stopped_early") else "—",
+            "Stopped Early":      "Yes (Stopped)" if r.get("stopped_early") else "—",
         })
 
     st.dataframe(rows, use_container_width=True, hide_index=True)

@@ -10,7 +10,8 @@ GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 PLACES_BASE = "https://places.googleapis.com/v1"
 
 
-def geocode(location: str, api_key: str) -> tuple[float, float]:
+def geocode(location: str, api_key: str) -> tuple[float, float, str]:
+    import re
     resp = requests.get(
         GEOCODE_URL,
         params={"address": location, "key": api_key},
@@ -30,8 +31,29 @@ def geocode(location: str, api_key: str) -> tuple[float, float]:
             f"Location not found: '{location}' (API status: {status}). "
             "Try a different city name or ZIP code."
         )
-    loc = data["results"][0]["geometry"]["location"]
-    return loc["lat"], loc["lng"]
+    
+    first_result = data["results"][0]
+    loc = first_result["geometry"]["location"]
+    
+    # Parse city and state from address components
+    components = first_result.get("address_components", [])
+    city, state = "", ""
+    for comp in components:
+        if "locality" in comp["types"]:
+            city = comp["short_name"]
+        if "administrative_area_level_1" in comp["types"]:
+            state = comp["short_name"]
+            
+    is_zip = re.match(r'^\d{5}(-\d{4})?$', location.strip())
+    if is_zip and city and state:
+        resolved_name = f"{location.strip()} ({city}, {state})"
+    elif city and state:
+        resolved_name = f"{city}, {state}"
+    else:
+        # fallback to formatted address or input
+        resolved_name = first_result.get("formatted_address", location)
+        
+    return loc["lat"], loc["lng"], resolved_name
 
 
 def search_clinics(lat: float, lng: float, radius_miles: int, max_results: int, api_key: str) -> list[dict]:

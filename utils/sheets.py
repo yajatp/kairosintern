@@ -32,23 +32,25 @@ _STATE_ABBRS = set(_STATE_NAMES.keys())
 
 
 def _parse_tab_name(location: str) -> str:
-    """Convert a location string to a sheet tab name like 'TX - Dallas'."""
+    """Convert a location string to a state tab name like 'Texas'."""
     if not location or not location.strip():
-        return "Unknown"
+        return "Other"
     loc = location.strip()
     parts = [p.strip() for p in loc.split(",")]
     if len(parts) >= 2:
         tail = parts[-1].split()[0].upper()
         if tail in _STATE_ABBRS:
-            city = ", ".join(parts[:-1])
-            return f"{tail} - {city}"
+            return _STATE_NAMES[tail]
     words = loc.split()
     if len(words) >= 2 and words[-1].upper() in _STATE_ABBRS:
         state = words[-1].upper()
-        city = " ".join(words[:-1])
-        return f"{state} - {city}"
-    # ZIP or unrecognised format — use as-is
-    return re.sub(r"[^\w\s\-]", "", loc)[:50]
+        return _STATE_NAMES[state]
+    # Check if any state name or abbreviation is directly in the string
+    loc_upper = loc.upper()
+    for abbr, full_name in _STATE_NAMES.items():
+        if f" {abbr}" in loc_upper or f",{abbr}" in loc_upper or full_name.upper() in loc_upper:
+            return full_name
+    return "Other"
 
 
 def _load_service_account_info() -> dict | None:
@@ -112,7 +114,7 @@ def append_leads_to_sheet(
     location: str,
     run_date: str,
 ) -> dict:
-    """Append leads to the Google Sheet, skipping duplicates by place_id.
+    """Append leads to the Google Sheet, merging and sorting rows by city/radius/score.
 
     Returns a dict: ``{"added": N, "skipped": M, "tab": tab_name}``.
     """
@@ -125,52 +127,126 @@ def append_leads_to_sheet(
     try:
         spreadsheet = client.open_by_key(SPREADSHEET_ID)
 
-        # Build headers: Run Date + all DataFrame columns
-        df_cols = list(df.columns)
-        headers = ["Run Date"] + df_cols
-
-        # Determine the place_id column name (may vary)
-        place_id_col: str | None = None
-        for candidate in ("place_id", "Place ID", "place id"):
-            if candidate in df_cols:
-                place_id_col = candidate
-                break
+        # Standard headers
+        headers = [
+            "City", "Search Radius", "Run Date", "Place ID", "Clinic Name", "Classification", "Specialty",
+            "Address", "Website", "Phone Number", "Best Contact Found", "Contact Role", "Contact Email",
+            "LinkedIn", "Number of Locations", "Pain Signal Type", "Evidence / Source", "Pain Score",
+            "Outreach Angle", "Notes", "Google Rating", "Total Reviews", "Hours Summary", "Extended Hours",
+            "Online Booking", "Review Data Depth", "reviews_json"
+        ]
 
         ws = _get_or_create_worksheet(spreadsheet, tab_name, headers)
 
-        # Read existing place_ids from column A (first data column after header)
-        existing_rows = ws.get_all_values()
-        existing_place_ids: set[str] = set()
-        if len(existing_rows) > 1:
-            # Column A is "Run Date"; column B would be first df col.
-            # If place_id_col is set, find its header position in the sheet.
-            if place_id_col and headers:
-                try:
-                    pid_col_idx = headers.index(place_id_col)
-                    for data_row in existing_rows[1:]:
-                        if len(data_row) > pid_col_idx and data_row[pid_col_idx]:
-                            existing_place_ids.add(str(data_row[pid_col_idx]).strip())
-                except ValueError:
-                    pass
+        # Retrieve existing rows
+        existing_values = ws.get_all_values()
+        existing_rows = []
+        old_headers = []
+        if len(existing_values) > 0:
+            old_headers = [h.strip() for h in existing_values[0]]
+            if len(existing_values) > 1:
+                existing_rows = existing_values[1:]
 
-        rows_to_add: list[list] = []
+        # Auto-migrate columns if the old header format is found
+        if old_headers and old_headers != headers:
+            migrated_rows = []
+            for row in existing_rows:
+                row_dict = {}
+                for idx, h in enumerate(old_headers):
+                    if idx < len(row):
+                        row_dict[h] = row[idx]
+                
+                new_row = []
+                for h in headers:
+                    new_row.append(row_dict.get(h, ""))
+                migrated_rows.append(new_row)
+            existing_rows = migrated_rows
+
+        # Create a dictionary of existing rows indexed by Place ID (index 3)
+        merged_data: dict[str, list] = {}
+        for row in existing_rows:
+            if len(row) > 3 and row[3]:
+                pid = str(row[3]).strip()
+                merged_data[pid] = row
+
         skipped = 0
+        added = 0
 
+        # Loop through df and add/overwrite in merged_data
         for _, row in df.iterrows():
-            if place_id_col:
-                pid = str(row.get(place_id_col, "")).strip()
-                if pid and pid in existing_place_ids:
-                    skipped += 1
-                    continue
-            values = [run_date] + [row.get(col, "") for col in df_cols]
-            rows_to_add.append(values)
-            if place_id_col:
-                existing_place_ids.add(str(row.get(place_id_col, "")))
+            pid = str(row.get("Place ID", row.get("place_id", ""))).strip()
+            if not pid:
+                continue
 
-        if rows_to_add:
-            ws.append_rows(rows_to_add, value_input_option="RAW")
+            run_date_val = row.get("Run Date", row.get("run_date", run_date))
 
-        return {"added": len(rows_to_add), "skipped": skipped, "tab": tab_name}
+            # Compile new row values matching standard headers
+            new_row_values = [
+                row.get("City", row.get("city", location)),
+                row.get("Search Radius", row.get("search_radius", "")),
+                run_date_val,
+                pid,
+                row.get("Clinic Name", row.get("name", "")),
+                row.get("Classification", row.get("classification", "")),
+                row.get("Specialty", row.get("specialty", "")),
+                row.get("Address", row.get("address", "")),
+                row.get("Website", row.get("website", "")),
+                row.get("Phone Number", row.get("phone", "")),
+                row.get("Best Contact Found", "Office Manager"),
+                row.get("Contact Role", "Office Manager"),
+                row.get("Contact Email", ""),
+                row.get("LinkedIn", ""),
+                row.get("Number of Locations", 1),
+                row.get("Pain Signal Type", row.get("signals", "")),
+                row.get("Evidence / Source", ""),
+                row.get("Pain Score", row.get("pain_score", 0)),
+                row.get("Outreach Angle", row.get("outreach_angle", "")),
+                row.get("Notes", ""),
+                row.get("Google Rating", row.get("rating", "")),
+                row.get("Total Reviews", row.get("total_reviews", 0)),
+                row.get("Hours Summary", ""),
+                row.get("Extended Hours", "Yes" if row.get("Extended Hours") == "Yes" or row.get("extended_hours") is True else "No"),
+                row.get("Online Booking", "Yes" if row.get("Online Booking") == "Yes" or row.get("online_booking") is True else "No"),
+                row.get("Review Data Depth", row.get("review_depth", "")),
+                row.get("reviews_json", ""),
+            ]
+
+            if pid in merged_data:
+                skipped += 1
+            else:
+                merged_data[pid] = new_row_values
+                added += 1
+
+        # Now sort the entire list of rows by City (index 0), then Search Radius (index 1), then Pain Score (index 17) descending.
+        all_rows = list(merged_data.values())
+
+        def parse_radius(val) -> int:
+            try:
+                digits = re.findall(r'\d+', str(val))
+                if digits:
+                    return int(digits[0])
+            except Exception:
+                pass
+            return 9999
+
+        def parse_pain_score(val) -> float:
+            try:
+                return float(val)
+            except Exception:
+                return 0.0
+
+        all_rows.sort(
+            key=lambda r: (
+                str(r[0]).lower() if len(r) > 0 else "",
+                parse_radius(r[1]) if len(r) > 1 else 9999,
+                -parse_pain_score(r[17]) if len(r) > 17 else 0.0
+            )
+        )
+
+        ws.clear()
+        ws.update([headers] + all_rows)
+
+        return {"added": added, "skipped": skipped, "tab": tab_name}
 
     except Exception as e:
         logger.warning(f"append_leads_to_sheet failed: {e}")
@@ -190,7 +266,6 @@ def check_if_in_sheet(place_id: str, location: str) -> bool:
         all_values = ws.get_all_values()
         if len(all_values) < 2:
             return False
-        # Find place_id column index
         header = all_values[0]
         for candidate in ("place_id", "Place ID"):
             if candidate in header:

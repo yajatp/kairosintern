@@ -309,21 +309,27 @@ def get_exact_run(location: str, radius_miles: int) -> dict | None:
     if not _supabase_ok():
         return None
     try:
+        import re
         resp = requests.get(
             f"{_SUPABASE_URL}/rest/v1/runs",
             headers=_headers(prefer=""),
             params={
-                "location": f"ilike.{location}",
-                "radius_miles": f"eq.{radius_miles}",
                 "order": "timestamp.desc",
-                "limit": 1,
+                "limit": 100,
             },
             timeout=8,
         )
         if resp.ok:
             rows = resp.json()
-            if rows:
-                return rows[0]
+            def clean(s: str) -> str:
+                return re.sub(r'[^\w\s]', '', s.lower().replace(" ", ""))
+                
+            clean_search = clean(location)
+            for row in rows:
+                if row.get("radius_miles") == radius_miles:
+                    clean_row_loc = clean(row.get("location", ""))
+                    if clean_search == clean_row_loc or clean_search in clean_row_loc or clean_row_loc in clean_search:
+                        return row
     except Exception as e:
         logger.warning(f"get_exact_run failed: {e}")
     return None
@@ -455,7 +461,7 @@ def get_lead_run_info(place_id: str) -> dict | None:
             headers=_headers(prefer=""),
             params={
                 "place_id": f"eq.{place_id}",
-                "select":   "id,run_location,scored_at",
+                "select":   "run_id,run_location,scored_at",
                 "order":    "scored_at.desc",
                 "limit":    1,
             },
@@ -466,7 +472,7 @@ def get_lead_run_info(place_id: str) -> dict | None:
             if rows:
                 row = rows[0]
                 return {
-                    "run_id":       row.get("id"),
+                    "run_id":       row.get("run_id"),
                     "run_location": row.get("run_location", ""),
                     "scored_at":    row.get("scored_at", ""),
                 }
@@ -479,18 +485,41 @@ def get_leads_for_run(
     run_location: str,
     run_timestamp: str,
     window_minutes: int = 15,
+    run_id: int | None = None,
 ) -> list[dict]:
-    """Fetch leads matching a run by location + time window.
+    """Fetch leads matching a run by run_id or location + time window.
 
-    Matches rows where ``run_location`` equals the run's location AND
+    If ``run_id`` is provided, queries directly by ``run_id``.
+    Otherwise, matches rows where ``run_location`` equals the run's location AND
     ``scored_at`` falls within ±``window_minutes`` of ``run_timestamp``.
     """
     if not _supabase_ok():
         return []
+    
+    if run_id is not None:
+        try:
+            resp = requests.get(
+                f"{_SUPABASE_URL}/rest/v1/leads",
+                headers=_headers(prefer=""),
+                params={
+                    "run_id": f"eq.{run_id}",
+                    "order": "pain_score.desc",
+                    "limit": 500,
+                },
+                timeout=8,
+            )
+            if resp.ok:
+                rows = resp.json()
+                if rows:
+                    return rows
+        except Exception as e:
+            logger.warning(f"get_leads_for_run by run_id failed: {e}")
+
     try:
         from datetime import timedelta, timezone
+        from utils.helpers import safe_parse_datetime
 
-        ts = datetime.fromisoformat(run_timestamp.replace("Z", "+00:00"))
+        ts = safe_parse_datetime(run_timestamp)
         if ts.tzinfo is None:
             ts = ts.replace(tzinfo=timezone.utc)
         lo = (ts - timedelta(minutes=window_minutes)).isoformat()
@@ -528,7 +557,7 @@ def get_leads_for_run(
         results = []
         for row in resp2.json():
             try:
-                row_ts = datetime.fromisoformat(row["scored_at"].replace("Z", "+00:00"))
+                row_ts = safe_parse_datetime(row["scored_at"])
                 if row_ts.tzinfo is None:
                     row_ts = row_ts.replace(tzinfo=timezone.utc)
                 if row_ts <= hi_dt:
