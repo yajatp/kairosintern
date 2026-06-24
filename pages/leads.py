@@ -41,7 +41,7 @@ from pipeline.scorer import (
     generate_outreach_angle,
 )
 from pipeline.website import check_website
-from utils.helpers import extract_city, get_hours_summary
+from utils.helpers import get_hours_summary
 from utils.usage_tracker import (
     record_usage,
     record_run,
@@ -571,19 +571,30 @@ with st.sidebar:
     _curr_rad = st.session_state["radius_miles_slider"]
     _dynamic_map_key = f"folium_map_{_temp_center_lat}_{_temp_center_lng}_{_curr_rad}"
 
+    # Purge stale map state for any radius other than the current one.
+    # Without this, revisiting a radius (e.g. 25→10→25) restores the old zoom
+    # from the prior visit and the zoom-sync code overrides the slider choice.
+    for _stale_key in [k for k in st.session_state if k.startswith("folium_map_") and k != _dynamic_map_key]:
+        del st.session_state[_stale_key]
+
     if _dynamic_map_key in st.session_state and st.session_state[_dynamic_map_key] is not None:
         _map_state = st.session_state[_dynamic_map_key]
         if isinstance(_map_state, dict) and "zoom" in _map_state:
             _map_zoom_val = _map_state["zoom"]
-            if _map_zoom_val >= 9:
-                _new_rad = 10
-            elif _map_zoom_val == 8:
-                _new_rad = 25
-            else:
-                _new_rad = 50
-            if _new_rad != _curr_rad:
-                st.session_state["radius_miles_slider"] = _new_rad
-                st.rerun()
+            _rad_to_zoom = {10: 9, 25: 8, 50: 7}
+            _expected_zoom = _rad_to_zoom.get(_curr_rad, 8)
+            # Only sync when the user manually scrolled the map (zoom differs from what
+            # the slider would set), not when we just rendered at the programmatic zoom.
+            if abs(_map_zoom_val - _expected_zoom) >= 1:
+                if _map_zoom_val >= 9:
+                    _new_rad = 10
+                elif _map_zoom_val == 8:
+                    _new_rad = 25
+                else:
+                    _new_rad = 50
+                if _new_rad != _curr_rad:
+                    st.session_state["radius_miles_slider"] = _new_rad
+                    st.rerun()
 
     st.markdown("Search Radius")
     radius_miles = st.select_slider(
@@ -695,18 +706,6 @@ with st.sidebar:
         label_visibility="collapsed",
     )
 
-    st.markdown("")
-    find_leads = st.button(
-        "Find Leads",
-        use_container_width=True,
-        type="primary",
-        disabled=_p["running"],
-    )
-
-    if _p["running"]:
-        if st.button("Stop Run", use_container_width=True, type="secondary"):
-            _p["stop_requested"] = True
-
     st.markdown("---")
 
     # ── Review analysis mode toggle ─────────────────────────────────────────
@@ -727,6 +726,18 @@ with st.sidebar:
     st.session_state["_review_mode"] = review_mode
     if review_mode == "AI (accurate)" and not GEMINI_API_KEY:
         st.caption("Set GEMINI_API_KEY to enable AI mode.")
+
+    st.markdown("")
+    find_leads = st.button(
+        "Find Leads",
+        use_container_width=True,
+        type="primary",
+        disabled=_p["running"],
+    )
+
+    if _p["running"]:
+        if st.button("Stop Run", use_container_width=True, type="secondary"):
+            _p["stop_requested"] = True
 
     st.markdown("---")
 
@@ -851,7 +862,7 @@ if _p["error"] and not _p["running"]:
 leads_df = _p.get("leads_df")
 
 if leads_df is not None and not _p["running"]:
-    if st.button("← New Search", type="secondary"):
+    if st.button("New Search", type="secondary"):
         _p["leads_df"] = None
         _p["error"] = None
         st.rerun()
@@ -1013,9 +1024,9 @@ if leads_df is not None and not _p["running"]:
         with tool_c3:
             loc = _p.get("search_location", "unknown")
             fname_base = f"kairos_{loc.replace(' ','_').replace(',','')}_{datetime.now().strftime('%Y%m%d')}"
-            with st.popover("Export ▾", use_container_width=True):
+            with st.popover("Export", use_container_width=True):
                 st.download_button(
-                    "📄 CSV (full)",
+                    "CSV (full)",
                     data=view_df.to_csv(index=False),
                     file_name=f"{fname_base}.csv",
                     mime="text/csv",
@@ -1024,7 +1035,7 @@ if leads_df is not None and not _p["running"]:
                 try:
                     from utils.export import df_to_xlsx_bytes
                     st.download_button(
-                        "📊 XLSX (formatted)",
+                        "XLSX (formatted)",
                         data=df_to_xlsx_bytes(view_df),
                         file_name=f"{fname_base}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1035,7 +1046,7 @@ if leads_df is not None and not _p["running"]:
                 st.markdown("---")
                 phones_emails = view_df[["Clinic Name", "Phone Number", "Contact Email", "Address"]].copy()
                 st.download_button(
-                    "📱 Phones & Emails",
+                    "Phones & Emails",
                     data=phones_emails.to_csv(index=False),
                     file_name=f"{fname_base}_contacts.csv",
                     mime="text/csv",
@@ -1043,7 +1054,7 @@ if leads_df is not None and not _p["running"]:
                 )
                 outreach = view_df[["Clinic Name", "Pain Signal Type", "Pain Score", "Outreach Angle", "Phone Number", "Contact Email"]].copy()
                 st.download_button(
-                    "🎯 Outreach List",
+                    "Outreach List",
                     data=outreach.to_csv(index=False),
                     file_name=f"{fname_base}_outreach.csv",
                     mime="text/csv",
@@ -1137,25 +1148,40 @@ elif leads_df is None and not _p["running"] and not _p["error"]:
 
     # ── Recent activity ───────────────────────────────────────────────────────
     if _hist:
-        _recent = _hist[:3]
+        from utils.usage_tracker import estimated_google_cost as _egc
+        from utils.helpers import safe_parse_datetime as _spd
+        _recent = _hist[:5]
         st.markdown(
-            "<div style='font-size:13px;font-weight:600;color:#6b6f76;margin:4px 0 8px;text-transform:uppercase;letter-spacing:0.05em'>Recent Activity</div>",
+            "<div style='font-size:11px;font-weight:700;color:#6b6f76;margin:4px 0 8px;"
+            "text-transform:uppercase;letter-spacing:0.07em'>Recent Activity</div>",
             unsafe_allow_html=True,
         )
-        for _r in _recent:
+        for _ri, _r in enumerate(_recent):
             _r_loc    = _r.get("location", "Unknown")
             _r_leads  = _r.get("leads_found", 0)
+            _r_clinics = _r.get("clinics_found", 0)
+            _r_rad    = _r.get("radius_miles", 25) or 25
             _r_ts     = _r.get("timestamp", "")
+            _r_id     = _r.get("id")
+            _r_cost   = _egc(_r.get("geocode_calls", 0), _r.get("search_calls", 0), _r.get("detail_calls", 0))
             try:
-                from utils.helpers import safe_parse_datetime as _spd
-                _r_date = _spd(_r_ts).strftime("%b %d, %Y") if _r_ts else ""
+                _r_date = _spd(_r_ts).strftime("%b %d") if _r_ts else ""
             except Exception:
                 _r_date = _r_ts
-            st.markdown(
-                f"<div style='background:rgba(24,62,53,0.05);border-radius:8px;padding:10px 14px;"
-                f"border-left:3px solid #3abdaf;margin-bottom:6px;display:flex;justify-content:space-between'>"
-                f"<span style='color:#282a30;font-size:14px;font-weight:500'>{_r_loc}</span>"
-                f"<span style='color:#6b6f76;font-size:13px'>{_r_leads} leads &nbsp;·&nbsp; {_r_date}</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
+            with st.expander(f"{_r_loc}  ·  {_r_leads} leads  ·  {_r_date}", expanded=False):
+                st.markdown(
+                    f"<div style='font-size:13px;color:#282a30;line-height:1.9'>"
+                    f"Radius: <strong>{_r_rad} mi</strong> &nbsp;·&nbsp; "
+                    f"Clinics scanned: <strong>{_r_clinics}</strong> &nbsp;·&nbsp; "
+                    f"Leads: <strong>{_r_leads}</strong>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                if _r_id is not None:
+                    if st.button(
+                        "View full run in History",
+                        key=f"_ra_view_{_ri}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["history_target_run"] = _r_id
+                        st.switch_page("pages/history.py")

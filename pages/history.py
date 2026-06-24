@@ -166,29 +166,45 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         if leads else pd.DataFrame()
     )
 
+    stopped_badge = "<span style='color:#c2410c;font-size:12px;font-weight:500'>Stopped early</span>" if stopped else ""
     st.markdown(
-        "<div style='background:rgba(24,62,53,0.05);border-radius:8px;padding:1px 12px;border-left:3px solid #3abdaf;margin-bottom:8px'>",
+        f"""
+        <div style='background:rgba(24,62,53,0.06);border-radius:8px;padding:14px 16px;
+                    border-left:3px solid #3abdaf;margin-bottom:12px'>
+          <div style='display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px'>
+            <div>
+              <div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;
+                          letter-spacing:0.07em;margin-bottom:8px'>Results</div>
+              <div style='font-size:13px;color:#282a30;line-height:1.8'>
+                Clinics processed: <strong>{r.get('clinics_found', 0)}</strong><br>
+                Leads output: <strong>{r.get('leads_found', 0)}</strong><br>
+                {stopped_badge}
+              </div>
+            </div>
+            <div>
+              <div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;
+                          letter-spacing:0.07em;margin-bottom:8px'>API Calls</div>
+              <div style='font-size:13px;color:#282a30;line-height:1.8'>
+                Geocode: {r.get('geocode_calls', 0)}<br>
+                Text Search: {r.get('search_calls', 0)}<br>
+                Place Details: {r.get('detail_calls', 0)}<br>
+                Adzuna: {r.get('adzuna_calls', 0)}<br>
+                Outscraper: {r.get('outscraper_reviews', 0)}
+              </div>
+            </div>
+            <div>
+              <div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;
+                          letter-spacing:0.07em;margin-bottom:8px'>Cost</div>
+              <div style='font-size:13px;color:#282a30;line-height:1.8'>
+                Est. Google: <strong>${g_cost:.3f}</strong><br>
+                <span style='color:#6b6f76;font-size:12px'>{ts_fmt}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.markdown("**Results**")
-        st.write(f"Clinics processed: {r.get('clinics_found', 0)}")
-        st.write(f"Leads output: {r.get('leads_found', 0)}")
-        if stopped:
-            st.warning("Stopped early by user")
-    with col2:
-        st.markdown("**API Calls**")
-        st.write(f"Geocode: {r.get('geocode_calls', 0)}")
-        st.write(f"Text Search: {r.get('search_calls', 0)}")
-        st.write(f"Place Details: {r.get('detail_calls', 0)}")
-        st.write(f"Adzuna: {r.get('adzuna_calls', 0)}")
-        st.write(f"Outscraper reviews: {r.get('outscraper_reviews', 0)}")
-    with col3:
-        st.markdown("**Cost**")
-        st.write(f"Est. Google cost: ${g_cost:.3f}")
-        st.write(f"Timestamp: {ts_fmt}")
-    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -209,10 +225,10 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                 result = append_leads_to_sheet(leads_df, location, run_date)
                 st.session_state[sheets_state_key] = result
     with exp_c3:
-        with st.popover("Export ▾", use_container_width=True):
+        with st.popover("Export", use_container_width=True):
             if not leads_df.empty:
                 st.download_button(
-                    "📄 CSV",
+                    "CSV",
                     data=leads_df.to_csv(index=False),
                     file_name=f"{fname_base}.csv",
                     mime="text/csv",
@@ -222,7 +238,7 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                 try:
                     from utils.export import df_to_xlsx_bytes
                     st.download_button(
-                        "📊 XLSX",
+                        "XLSX",
                         data=df_to_xlsx_bytes(leads_df),
                         file_name=f"{fname_base}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -234,7 +250,7 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                 st.markdown("---")
                 phones_emails = leads_df[["Clinic Name", "Phone Number", "Contact Email", "Address"]].copy()
                 st.download_button(
-                    "📱 Phones & Emails",
+                    "Phones & Emails",
                     data=phones_emails.to_csv(index=False),
                     file_name=f"{fname_base}_contacts.csv",
                     mime="text/csv",
@@ -243,7 +259,7 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
                 )
                 outreach = leads_df[["Clinic Name", "Pain Signal Type", "Pain Score", "Outreach Angle", "Phone Number", "Contact Email"]].copy()
                 st.download_button(
-                    "🎯 Outreach List",
+                    "Outreach List",
                     data=outreach.to_csv(index=False),
                     file_name=f"{fname_base}_outreach.csv",
                     mime="text/csv",
@@ -371,7 +387,7 @@ c3.metric("Unique Locations",      unique_cities)
 c4.metric("Est. Cumulative Cost",  f"${total_cost:.2f}")
 with c_refresh:
     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-    if st.button("🔄 Refresh", help="Reload run history from database", use_container_width=True):
+    if st.button("Refresh", help="Reload run history from database", use_container_width=True):
         for key in list(st.session_state.keys()):
             if key.startswith("_leads_"):
                 del st.session_state[key]
