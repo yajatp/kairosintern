@@ -220,7 +220,18 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
 
             website_data  = check_website(details.get("website"))
             job_match     = match_clinic_to_job(details.get("name", ""), jobs)
-            review_data   = scan_reviews(details.get("reviews", []))
+
+            # Respect the review analysis mode toggle set in the sidebar
+            _mode     = p.get("review_mode", "Pattern (fast)")
+            _gem_key  = p.get("gemini_key", "")
+            if _mode == "AI (accurate)" and _gem_key:
+                from pipeline.review_scanner_ab import scan_method_b
+                try:
+                    review_data = scan_method_b(details.get("reviews", []), _gem_key)
+                except Exception:
+                    review_data = scan_reviews(details.get("reviews", []))
+            else:
+                review_data = scan_reviews(details.get("reviews", []))
             review_data["review_source"] = "places_sample"
             extended      = detect_extended_hours(details.get("opening_hours"))
             specialty     = infer_specialty(details.get("name", ""), details.get("types", []))
@@ -696,6 +707,27 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # ── Review analysis mode toggle ─────────────────────────────────────────
+    GEMINI_API_KEY = _get_secret("GEMINI_API_KEY")
+    st.markdown("Review Analysis Mode")
+    review_mode = st.radio(
+        "Mode",
+        ["Pattern (fast)", "AI (accurate)"],
+        label_visibility="collapsed",
+        horizontal=True,
+        key="review_mode",
+        help=(
+            "Pattern: instant keyword matching, no API cost.\n"
+            "AI: Gemini reads all reviews — catches nuanced complaints, ~2-5s/clinic, "
+            "requires GEMINI_API_KEY."
+        ),
+    )
+    st.session_state["_review_mode"] = review_mode
+    if review_mode == "AI (accurate)" and not GEMINI_API_KEY:
+        st.caption("Set GEMINI_API_KEY to enable AI mode.")
+
+    st.markdown("---")
+
     # Pain score guide
     st.markdown(
         f"""
@@ -776,6 +808,10 @@ if find_leads:
 
     # Clear the "run anyway" flag so it doesn't persist to future searches
     st.session_state.pop("_overlap_run_anyway", None)
+
+    # Pass review mode and Gemini key into pipeline state before thread starts
+    _p["review_mode"] = st.session_state.get("_review_mode", "Pattern (fast)")
+    _p["gemini_key"]  = _get_secret("GEMINI_API_KEY")
 
     threading.Thread(
         target=_run_pipeline,
