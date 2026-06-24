@@ -166,6 +166,10 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         if leads else pd.DataFrame()
     )
 
+    st.markdown(
+        "<div style='background:rgba(24,62,53,0.05);border-radius:8px;padding:1px 12px;border-left:3px solid #3abdaf;margin-bottom:8px'>",
+        unsafe_allow_html=True,
+    )
     col1, col2, col3 = st.columns(3)
     with col1:
         st.markdown("**Results**")
@@ -184,6 +188,7 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         st.markdown("**Cost**")
         st.write(f"Est. Google cost: ${g_cost:.3f}")
         st.write(f"Timestamp: {ts_fmt}")
+    st.markdown("</div>", unsafe_allow_html=True)
 
     st.markdown("---")
 
@@ -270,6 +275,12 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         if not leads:
             st.info("No leads found in Supabase for this run. Leads are only available when Supabase is configured and the run saved leads.")
         else:
+            st.markdown(
+                "<div style='border-left:3px solid #183e34;padding-left:10px;margin:8px 0'>"
+                "<span style='color:#183e34;font-weight:600'>Leads — sorted by pain score</span>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
             st.caption(f"{len(leads)} leads for this run")
             from utils.helpers import render_lead_card
 

@@ -575,9 +575,9 @@ with st.sidebar:
         _map_state = st.session_state[_dynamic_map_key]
         if isinstance(_map_state, dict) and "zoom" in _map_state:
             _map_zoom_val = _map_state["zoom"]
-            if _map_zoom_val >= 11:
+            if _map_zoom_val >= 9:
                 _new_rad = 10
-            elif _map_zoom_val == 10:
+            elif _map_zoom_val == 8:
                 _new_rad = 25
             else:
                 _new_rad = 50
@@ -603,7 +603,7 @@ with st.sidebar:
         _geo = _geocode_for_map(location, GOOGLE_PLACES_API_KEY)
         if _geo:
             _map_center_lat, _map_center_lng, _city_label = _geo
-            _zoom_map = {10: 11, 25: 10, 50: 9}
+            _zoom_map = {10: 9, 25: 8, 50: 7}
             _map_zoom = _zoom_map.get(radius_miles, 10)
             _map_marker = (_map_center_lat, _map_center_lng, _city_label)
 
@@ -851,6 +851,12 @@ if _p["error"] and not _p["running"]:
 leads_df = _p.get("leads_df")
 
 if leads_df is not None and not _p["running"]:
+    if st.button("← New Search", type="secondary"):
+        _p["leads_df"] = None
+        _p["error"] = None
+        st.rerun()
+
+if leads_df is not None and not _p["running"]:
     df = leads_df.copy()
     if specialty_filter and len(specialty_filter) < len(all_specialties):
         df = df[df["Specialty"].isin(specialty_filter)]
@@ -1089,36 +1095,67 @@ if leads_df is not None and not _p["running"]:
                     from utils.helpers import render_lead_card
                     render_lead_card(row)
 
-# ── Empty state ──────────────────────────────────────────────────────────────────
+# ── Landing / idle state ─────────────────────────────────────────────────────────
 elif leads_df is None and not _p["running"] and not _p["error"]:
+    from utils.usage_tracker import get_run_history as _get_run_history
+    _hist = _get_run_history(limit=200)
+    _total_runs   = len(_hist)
+    _total_leads  = sum(r.get("leads_found", 0) for r in _hist)
+    _unique_cities = len({r.get("location", "") for r in _hist})
+
+    # ── Stats row ────────────────────────────────────────────────────────────
+    if _total_runs > 0:
+        _sc1, _sc2, _sc3 = st.columns(3)
+        _sc1.metric("Total Runs", _total_runs)
+        _sc2.metric("Leads Found", _total_leads)
+        _sc3.metric("Cities Searched", _unique_cities)
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # ── How it works ─────────────────────────────────────────────────────────
     st.markdown(
-        f"""
-        <div class='empty-state'>
-          <div class='empty-state-title'>Ready to find leads</div>
-          <div class='empty-state-body'>
-            Enter a city, state, or ZIP in the sidebar and click <strong>Find Leads</strong>
-            to scan dental clinics for front-desk automation opportunities.
-          </div>
-          <div class='how-it-works'>
-            <div class='hw-title'>How it works</div>
-            <div class='hw-step'>
-              <div class='hw-num'>1</div>
-              <div>Scans Google Places for dental clinics near the target location</div>
+        """
+        <div style='background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;padding:24px 28px;margin:8px 0 16px'>
+          <div style='font-size:15px;font-weight:600;color:#183e34;margin-bottom:16px'>How it works</div>
+          <div style='display:flex;flex-direction:column;gap:14px'>
+            <div style='display:flex;align-items:flex-start;gap:14px'>
+              <div style='min-width:28px;height:28px;border-radius:50%;background:#183e34;color:#ffffff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center'>1</div>
+              <div style='color:#282a30;font-size:14px;padding-top:4px'>Enter a city + radius in the sidebar to define your search area</div>
             </div>
-            <div class='hw-step'>
-              <div class='hw-num'>2</div>
-              <div>Cross-references active hiring signals on Adzuna job board</div>
+            <div style='display:flex;align-items:flex-start;gap:14px'>
+              <div style='min-width:28px;height:28px;border-radius:50%;background:#183e34;color:#ffffff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center'>2</div>
+              <div style='color:#282a30;font-size:14px;padding-top:4px'>Click <strong>Find Leads</strong> — we scan Google Maps for dental clinics and cross-reference Adzuna job listings for hiring signals</div>
             </div>
-            <div class='hw-step'>
-              <div class='hw-num'>3</div>
-              <div>Scans patient reviews for admin and front-desk complaints</div>
-            </div>
-            <div class='hw-step'>
-              <div class='hw-num'>4</div>
-              <div>Scores and ranks each clinic by pain signal strength</div>
+            <div style='display:flex;align-items:flex-start;gap:14px'>
+              <div style='min-width:28px;height:28px;border-radius:50%;background:#183e34;color:#ffffff;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center'>3</div>
+              <div style='color:#282a30;font-size:14px;padding-top:4px'>Review scored leads sorted by pain signal strength — high-priority clinics at the top</div>
             </div>
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+    # ── Recent activity ───────────────────────────────────────────────────────
+    if _hist:
+        _recent = _hist[:3]
+        st.markdown(
+            "<div style='font-size:13px;font-weight:600;color:#6b6f76;margin:4px 0 8px;text-transform:uppercase;letter-spacing:0.05em'>Recent Activity</div>",
+            unsafe_allow_html=True,
+        )
+        for _r in _recent:
+            _r_loc    = _r.get("location", "Unknown")
+            _r_leads  = _r.get("leads_found", 0)
+            _r_ts     = _r.get("timestamp", "")
+            try:
+                from utils.helpers import safe_parse_datetime as _spd
+                _r_date = _spd(_r_ts).strftime("%b %d, %Y") if _r_ts else ""
+            except Exception:
+                _r_date = _r_ts
+            st.markdown(
+                f"<div style='background:rgba(24,62,53,0.05);border-radius:8px;padding:10px 14px;"
+                f"border-left:3px solid #3abdaf;margin-bottom:6px;display:flex;justify-content:space-between'>"
+                f"<span style='color:#282a30;font-size:14px;font-weight:500'>{_r_loc}</span>"
+                f"<span style='color:#6b6f76;font-size:13px'>{_r_leads} leads &nbsp;·&nbsp; {_r_date}</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
