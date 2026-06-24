@@ -400,14 +400,25 @@ if not history:
     )
     st.stop()
 
-# ── Prefetch leads in bulk for all visible runs so View Leads is instant ─────────
-_run_ids = [r.get("id") for r in history if r.get("id") is not None]
-_missing_ids = [_rid for _rid in _run_ids if f"_leads_{_rid}" not in st.session_state]
+# ── Prefetch leads in bulk for all visible non-legacy runs so View Leads is instant ─────────
+_run_ids_to_fetch = []
+for r in history:
+    _pf_id = r.get("id")
+    if _pf_id is None:
+        continue
+    _pf_key = f"_leads_{_pf_id}"
+    if _pf_key in st.session_state:
+        continue
+    if r.get("leads_found", 0) == 0:
+        st.session_state[_pf_key] = []
+        continue
+    if r.get("pattern_fallback_count") is not None:
+        _run_ids_to_fetch.append(_pf_id)
 
-if _missing_ids:
+if _run_ids_to_fetch:
     try:
-        _bulk_leads = get_leads_for_runs_bulk(_missing_ids)
-        for _rid in _missing_ids:
+        _bulk_leads = get_leads_for_runs_bulk(_run_ids_to_fetch)
+        for _rid in _run_ids_to_fetch:
             st.session_state[f"_leads_{_rid}"] = _bulk_leads.get(_rid, [])
     except Exception:
         pass
