@@ -44,3 +44,37 @@ with st.sidebar:
     st.page_link(_history_page,   label="History",     icon=":material/history:")
 
 pg.run()
+
+# Inject JS after every page render to color lead expanders by pain score.
+# MutationObserver keeps it live as Streamlit rerenders without needing a re-inject.
+import streamlit.components.v1 as _components
+_components.html("""
+<script>
+(function() {
+    function paint() {
+        try {
+            var doc = window.parent.document;
+            doc.querySelectorAll('[data-testid="stExpander"]').forEach(function(el) {
+                var s = el.querySelector('summary');
+                if (!s) return;
+                var m = (s.textContent || '').match(/Score\\s+(\\d+(?:\\.\\d+)?)/);
+                if (!m) return;
+                var score = parseFloat(m[1]);
+                var bg, bc;
+                if      (score >= 6) { bg = 'rgba(239,68,68,0.09)';   bc = 'rgba(239,68,68,0.4)'; }
+                else if (score >= 4) { bg = 'rgba(249,115,22,0.09)';  bc = 'rgba(249,115,22,0.4)'; }
+                else if (score >= 2) { bg = 'rgba(234,179,8,0.09)';   bc = 'rgba(234,179,8,0.4)'; }
+                else                 { bg = 'rgba(34,197,94,0.09)';   bc = 'rgba(34,197,94,0.4)'; }
+                el.style.setProperty('background', bg, 'important');
+                el.style.setProperty('border-color', bc, 'important');
+            });
+        } catch(e) {}
+    }
+    paint();
+    try {
+        var obs = new MutationObserver(function() { setTimeout(paint, 80); });
+        obs.observe(window.parent.document.body, { childList: true, subtree: true });
+    } catch(e) {}
+})();
+</script>
+""", height=0)

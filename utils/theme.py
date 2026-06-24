@@ -335,28 +335,30 @@ div[data-testid="stSelectSlider"] [role="slider"] {{
 }}
 .stTabs [data-baseweb="tab-panel"] {{ background: transparent !important; padding: 1.25rem 0 0 !important; }}
 
-/* ── Expanders as issue rows ──────────────────── */
+/* ── Expanders ────────────────────────────────── */
 [data-testid="stExpander"] {{
-    border: none !important;
-    border-bottom: 1px solid {border} !important;
-    border-radius: 0 !important;
-    background: {bg_card} !important;
+    border: 1px solid rgba(24,62,53,0.14) !important;
+    border-radius: 8px !important;
+    background: rgba(24,62,53,0.05) !important;
     box-shadow: none !important;
-    margin: 0 !important;
+    margin: 0 0 6px 0 !important;
 }}
 [data-testid="stExpander"] summary {{
-    background: {bg_card} !important; color: {text} !important;
+    background: transparent !important; color: {text} !important;
     font-weight: 400 !important; font-size: 13px !important;
-    padding: 9px 14px !important; border-radius: 0 !important;
+    padding: 10px 14px !important; border-radius: 7px !important;
     transition: background 0.08s ease !important;
     min-height: 40px !important;
     display: flex !important; align-items: center !important;
     letter-spacing: -0.01em !important;
 }}
-[data-testid="stExpander"] summary:hover {{ background: {bg_hover} !important; }}
+[data-testid="stExpander"] summary:hover {{
+    background: rgba(24,62,53,0.06) !important;
+}}
 [data-testid="stExpander"] > div > div {{
-    background: {bg_card} !important;
-    border-top: 1px solid {border} !important;
+    background: rgba(24,62,53,0.02) !important;
+    border-top: 1px solid rgba(24,62,53,0.10) !important;
+    border-radius: 0 0 7px 7px !important;
     padding: 16px !important;
 }}
 
