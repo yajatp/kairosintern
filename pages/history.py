@@ -6,7 +6,7 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from utils.usage_tracker import get_run_history, estimated_google_cost, get_leads_for_run
+from utils.usage_tracker import get_run_history, estimated_google_cost, estimated_outscraper_cost, get_leads_for_run
 from utils.helpers import safe_parse_datetime
 
 _STATE_NAMES = {
@@ -136,6 +136,8 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
     g_cost  = estimated_google_cost(
         r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0)
     )
+    o_cost  = estimated_outscraper_cost(r.get("outscraper_reviews", 0))
+    t_cost  = g_cost + o_cost
     stopped = r.get("stopped_early", False)
     ts_fmt  = _fmt_ts(ts)
     location = r.get("location", "")
@@ -191,7 +193,9 @@ def _render_run_expander(r: dict, key_prefix: str, target_lead_place_id: str | N
         "<div style='font-size:10px;font-weight:700;color:#6b6f76;text-transform:uppercase;"
         "letter-spacing:0.07em;margin-bottom:8px'>Cost</div>"
         f"<div style='font-size:13px;color:#282a30;line-height:1.8'>"
-        f"Est. Google: <strong>${g_cost:.3f}</strong><br>"
+        f"Google: ${g_cost:.3f}<br>"
+        f"Outscraper: ${o_cost:.3f}<br>"
+        f"<strong>Total: ${t_cost:.3f}</strong><br>"
         f"<span style='color:#6b6f76;font-size:12px'>{ts_fmt}</span></div></div>"
         "</div></div>",
         unsafe_allow_html=True,
@@ -365,6 +369,7 @@ total_runs   = len(history)
 total_leads  = sum(r.get("leads_found", 0) for r in history)
 total_cost   = sum(
     estimated_google_cost(r.get("geocode_calls", 0), r.get("search_calls", 0), r.get("detail_calls", 0))
+    + estimated_outscraper_cost(r.get("outscraper_reviews", 0))
     for r in history
 )
 unique_cities = len({r.get("location", "") for r in history})
@@ -480,6 +485,7 @@ with tab_geo:
                         r.get("search_calls", 0),
                         r.get("detail_calls", 0),
                     )
+                    _rc_t_cost = g_cost + estimated_outscraper_cost(r.get("outscraper_reviews", 0))
                     stopped = r.get("stopped_early", False)
                     ts_fmt  = _fmt_ts(r.get("timestamp", ""))
 
@@ -492,7 +498,7 @@ with tab_geo:
                     rc[2].metric("Clinics",  r.get("clinics_found", 0))
                     rc[3].metric("Searches", r.get("search_calls", 0))
                     rc[4].metric("Details",  r.get("detail_calls", 0))
-                    rc[5].metric("Cost",     f"${g_cost:.3f}")
+                    rc[5].metric("Cost",     f"${_rc_t_cost:.3f}")
 
                     # Per-run expander with leads / export / sheets
                     run_ts_fmt = _fmt_ts(r.get("timestamp", ""))

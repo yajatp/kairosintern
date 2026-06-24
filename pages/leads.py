@@ -49,6 +49,8 @@ from utils.usage_tracker import (
     get_exact_run,
     get_known_place_ids,
     get_lead_run_info,
+    estimated_google_cost,
+    estimated_outscraper_cost,
 )
 
 # ── Review drill-down helpers ───────────────────────────────────────────────────
@@ -488,6 +490,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
         except Exception:
             p["sheets_result"] = None
 
+        p["last_calls"] = dict(_calls)
         p["running"] = False
 
 
@@ -918,39 +921,27 @@ if leads_df is not None and not _p["running"]:
         deep_ct   = len(df[df["Review Data Depth"] == "Deep scan"])
         hiring_ct = len(df[df["Pain Signal Type"].str.contains("iring", na=False)])
 
+        _lc       = _p.get("last_calls", {})
+        _g_cost   = estimated_google_cost(_lc.get("geocode", 0), _lc.get("search", 0), _lc.get("detail", 0))
+        _o_cost   = estimated_outscraper_cost(_lc.get("outscraper_reviews", 0))
+        _t_cost   = _g_cost + _o_cost
+
         st.markdown(
-            f"""
-            <div class='stat-blocks' style='margin:20px 0 18px'>
-              <div class='stat-block'>
-                <div class='sl'>Total Leads</div>
-                <div class='sv'>{len(df)}</div>
-              </div>
-              <div class='stat-block'>
-                <div class='sl'>High Priority</div>
-                <div class='sv' style='color:#ef4444'>{high_ct}</div>
-                <div class='ss'>Score ≥ 6</div>
-              </div>
-              <div class='stat-block'>
-                <div class='sl'>Strong Signal</div>
-                <div class='sv' style='color:#f97316'>{strong_ct}</div>
-                <div class='ss'>Score 4–5</div>
-              </div>
-              <div class='stat-block'>
-                <div class='sl'>Avg Score</div>
-                <div class='sv'>{avg_score}</div>
-              </div>
-              <div class='stat-block'>
-                <div class='sl'>Deep Scans</div>
-                <div class='sv'>{deep_ct}</div>
-                <div class='ss'>Outscraper enriched</div>
-              </div>
-              <div class='stat-block'>
-                <div class='sl'>Hiring Signals</div>
-                <div class='sv'>{hiring_ct}</div>
-                <div class='ss'>Hiring detected</div>
-              </div>
-            </div>
-            """,
+            f"<div class='stat-blocks' style='margin:20px 0 18px'>"
+            f"<div class='stat-block'><div class='sl'>Total Leads</div><div class='sv'>{len(df)}</div></div>"
+            f"<div class='stat-block'><div class='sl'>High Priority</div>"
+            f"<div class='sv' style='color:#ef4444'>{high_ct}</div><div class='ss'>Score ≥ 6</div></div>"
+            f"<div class='stat-block'><div class='sl'>Strong Signal</div>"
+            f"<div class='sv' style='color:#f97316'>{strong_ct}</div><div class='ss'>Score 4–5</div></div>"
+            f"<div class='stat-block'><div class='sl'>Avg Score</div><div class='sv'>{avg_score}</div></div>"
+            f"<div class='stat-block'><div class='sl'>Deep Scans</div>"
+            f"<div class='sv'>{deep_ct}</div><div class='ss'>Outscraper enriched</div></div>"
+            f"<div class='stat-block'><div class='sl'>Hiring Signals</div>"
+            f"<div class='sv'>{hiring_ct}</div><div class='ss'>Hiring detected</div></div>"
+            f"<div class='stat-block'><div class='sl'>Run Cost</div>"
+            f"<div class='sv'>${_t_cost:.3f}</div>"
+            f"<div class='ss'>Google ${_g_cost:.3f} · OS ${_o_cost:.3f}</div></div>"
+            f"</div>",
             unsafe_allow_html=True,
         )
 

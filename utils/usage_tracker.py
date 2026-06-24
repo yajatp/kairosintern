@@ -60,6 +60,7 @@ logger = logging.getLogger(__name__)
 TRACKER_FILE = Path("api_usage.json")
 
 OUTSCRAPER_MONTHLY_LIMIT    = 400
+OUTSCRAPER_REVIEW_COST      = 0.003   # $3 per 1,000 reviews
 GOOGLE_MONTHLY_CREDIT_USD   = 200.0
 GOOGLE_GEOCODE_COST         = 0.005
 GOOGLE_SEARCH_COST          = 0.032
@@ -112,6 +113,10 @@ def estimated_google_cost(geocode: int, searches: int, details: int) -> float:
         searches * GOOGLE_SEARCH_COST  +
         details  * GOOGLE_DETAIL_COST
     )
+
+
+def estimated_outscraper_cost(reviews: int) -> float:
+    return reviews * OUTSCRAPER_REVIEW_COST
 
 
 def _current_ym() -> str:

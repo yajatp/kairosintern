@@ -6,11 +6,13 @@ from utils.usage_tracker import (
     get_monthly_stats,
     get_run_history,
     estimated_google_cost,
+    estimated_outscraper_cost,
     using_supabase,
     GOOGLE_MONTHLY_CREDIT_USD,
     GOOGLE_GEOCODE_COST,
     GOOGLE_SEARCH_COST,
     GOOGLE_DETAIL_COST,
+    OUTSCRAPER_REVIEW_COST,
     ADZUNA_DAILY_LIMIT,
 )
 
@@ -67,14 +69,15 @@ st.markdown("---")
 
 # ── Outscraper ───────────────────────────────────────────────────────────────────
 st.markdown("### Outscraper — Deep Reviews")
+st.caption(f"\\${OUTSCRAPER_REVIEW_COST}/review · $3 per 1,000 reviews")
 
 reviews_used = o.get("reviews_used", 0)
+o_cost_month = estimated_outscraper_cost(reviews_used)
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 col1.metric("Reviews Pulled This Month", reviews_used)
-col2.metric("Month", datetime.now().strftime("%B %Y"))
-
-st.caption("No monthly cap — deep scans run freely. Usage tracked for visibility.")
+col2.metric("Est. Outscraper Cost",      f"${o_cost_month:.2f}")
+col3.metric("Month",                     datetime.now().strftime("%B %Y"))
 
 st.markdown("---")
 
@@ -113,6 +116,7 @@ else:
             r.get("search_calls", 0),
             r.get("detail_calls", 0),
         )
+        o_cost = estimated_outscraper_cost(r.get("outscraper_reviews", 0))
         rows.append({
             "Time":               ts_fmt,
             "Location":           r.get("location", ""),
@@ -122,14 +126,17 @@ else:
             "Searches":           r.get("search_calls", 0),
             "Details":            r.get("detail_calls", 0),
             "Outscraper Reviews": r.get("outscraper_reviews", 0),
-            "Est. Google Cost":   f"${g_cost:.3f}",
-            "Stopped Early":      "Yes (Stopped)" if r.get("stopped_early") else "—",
+            "Google Cost":        f"${g_cost:.3f}",
+            "Outscraper Cost":    f"${o_cost:.3f}",
+            "Total Cost":         f"${g_cost + o_cost:.3f}",
+            "Stopped Early":      "Yes" if r.get("stopped_early") else "—",
         })
 
     st.dataframe(rows, use_container_width=True, hide_index=True)
 
 st.markdown("---")
 st.caption(
-    "Cost estimates use published Google Maps Platform pricing and are approximate. "
-    "Check your Google Cloud billing dashboard for actuals."
+    "Google cost estimates use published Maps Platform pricing. "
+    "Outscraper estimated at $3/1,000 reviews. "
+    "Check your billing dashboards for actuals."
 )
