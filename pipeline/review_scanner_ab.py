@@ -374,7 +374,7 @@ def _call_gemini(prompt: str, api_key: str) -> str:
             "Run: pip install google-generativeai>=0.7.0"
         )
     genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.0-flash")
     response = model.generate_content(prompt)
     return response.text
 
