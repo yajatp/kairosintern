@@ -1,9 +1,13 @@
 import logging
+import os
+
 import requests
 
 logger = logging.getLogger(__name__)
 
-OUTSCRAPER_ENDPOINT = "https://api.app.outscraper.com/maps/reviews-v2"
+OUTSCRAPER_ENDPOINT = os.getenv(
+    "OUTSCRAPER_ENDPOINT", "https://api.outscraper.cloud/google-maps-reviews"
+)
 
 
 def fetch_deep_reviews(place_id: str, api_key: str, reviews_limit: int = 10) -> list[dict]:
@@ -18,7 +22,7 @@ def fetch_deep_reviews(place_id: str, api_key: str, reviews_limit: int = 10) -> 
                 "async": "false",
             },
             headers={"X-API-KEY": api_key},
-            timeout=15,
+            timeout=60,
         )
         if resp.status_code != 200:
             logger.warning(f"Outscraper returned {resp.status_code} for place {place_id}")
