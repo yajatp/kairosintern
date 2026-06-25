@@ -7,7 +7,6 @@ from datetime import date
 import folium
 import pandas as pd
 import streamlit as st
-from branca.element import MacroElement, Template
 from folium.plugins import Draw
 from streamlit_folium import st_folium
 
@@ -227,27 +226,51 @@ def _render_draw_map() -> list[list[float]] | None:
 
     folium.LayerControl(position="bottomright", collapsed=True).add_to(m)
 
-    # Auto satellite labels – no toggle, injected via Leaflet JS at map init
-    class _SatLabels(MacroElement):
-        _template = Template("""
-            {% macro script(this, kwargs) %}
-            (function() {
-                var map = {{ this._parent.get_name() }};
-                var labelsLayer = L.tileLayer(
-                    'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
-                    {attribution: '© CartoDB', pane: 'overlayPane', zIndex: 650}
-                );
-                map.on('baselayerchange', function(e) {
-                    if (e.name === 'Satellite') {
-                        map.addLayer(labelsLayer);
-                    } else {
-                        map.removeLayer(labelsLayer);
-                    }
-                });
-            })();
-            {% endmacro %}
-        """)
-    _SatLabels().add_to(m)
+    # Auto satellite labels – no toggle, injected via Leaflet JS after map initialization
+    _auto_labels_js = """
+    <script>
+    (function() {
+        var checkCount = 0;
+        function initAutoLabels() {
+            var mapKey = Object.keys(window).find(function(k) {
+                return window[k] instanceof L.Map;
+            });
+            if (!mapKey) {
+                checkCount++;
+                if (checkCount < 100) {
+                    setTimeout(initAutoLabels, 100);
+                }
+                return;
+            }
+            var map = window[mapKey];
+            var labelsLayer = L.tileLayer(
+                'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
+                {
+                    attribution: '&copy; CartoDB',
+                    pane: 'overlayPane',
+                    zIndex: 650
+                }
+            );
+            map.on('baselayerchange', function(e) {
+                if (e.name === 'Satellite') {
+                    map.addLayer(labelsLayer);
+                } else {
+                    map.removeLayer(labelsLayer);
+                }
+            });
+        }
+        function waitLeaflet() {
+            if (typeof L !== 'undefined') {
+                initAutoLabels();
+            } else {
+                setTimeout(waitLeaflet, 100);
+            }
+        }
+        waitLeaflet();
+    })();
+    </script>
+    """
+    m.get_root().html.add_child(folium.Element(_auto_labels_js))
 
     Draw(
         export=False,
