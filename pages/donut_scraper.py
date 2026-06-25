@@ -192,11 +192,10 @@ _TILE_LAYERS = {
         "tiles": "CartoDB positron",
         "attr": None,
     },
-    "Dark": {
-        "tiles": "CartoDB dark_matter",
-        "attr": None,
-    },
 }
+
+# Esri reference overlay – road/place labels drawn on top of satellite imagery
+_ESRI_LABELS_URL = "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Reference_Overlay/MapServer/tile/{z}/{y}/{x}"
 
 
 def _render_draw_map() -> list[list[float]] | None:
@@ -214,15 +213,28 @@ def _render_draw_map() -> list[list[float]] | None:
         center_lat = sum(lats) / len(lats)
         center_lng = sum(lngs) / len(lngs)
 
+    # Street (OSM) is the default base layer (show=True)
     m = folium.Map(location=[center_lat, center_lng], zoom_start=zoom, tiles=None)
 
+    first = True
     for name, cfg in _TILE_LAYERS.items():
         if cfg["attr"]:
             folium.TileLayer(
-                tiles=cfg["tiles"], attr=cfg["attr"], name=name, control=True,
+                tiles=cfg["tiles"], attr=cfg["attr"], name=name, control=True, show=first,
             ).add_to(m)
         else:
-            folium.TileLayer(cfg["tiles"], name=name, control=True).add_to(m)
+            folium.TileLayer(cfg["tiles"], name=name, control=True, show=first).add_to(m)
+        first = False
+
+    # Labels overlay for satellite – renders road names, city labels, etc.
+    folium.TileLayer(
+        tiles=_ESRI_LABELS_URL,
+        attr="Esri Reference",
+        name="Labels (satellite)",
+        overlay=True,
+        control=True,
+        show=False,
+    ).add_to(m)
 
     folium.LayerControl(position="bottomright", collapsed=True).add_to(m)
 
