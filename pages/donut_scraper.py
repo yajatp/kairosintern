@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import threading
 from datetime import date
@@ -181,16 +180,16 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
 
 
 _TILE_LAYERS = {
-    "Light Streets": {
-        "tiles": "CartoDB positron",
+    "Street (OSM)": {
+        "tiles": "OpenStreetMap",
         "attr": None,
     },
     "Satellite": {
         "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         "attr": "Esri World Imagery",
     },
-    "Street (OSM)": {
-        "tiles": "OpenStreetMap",
+    "Light Streets": {
+        "tiles": "CartoDB positron",
         "attr": None,
     },
     "Dark": {
