@@ -246,7 +246,7 @@ def run_grid_search(
         if progress_cb:
             progress_cb(
                 f"Searching grid cell {i + 1} of {total_centers}...",
-                (i + 1) / (total_centers * 2),
+                int(2 + 48 * (i + 1) / max(total_centers, 1)),
             )
         for stub in _search_one_circle(lat, lng, radius_m, api_key):
             pid = stub.get("place_id")
@@ -258,7 +258,7 @@ def run_grid_search(
     if progress_cb:
         progress_cb(
             f"Found {len(unique_stubs)} unique clinics. Fetching details...",
-            0.5,
+            50,
         )
 
     clinics: list[dict] = []
@@ -267,7 +267,7 @@ def run_grid_search(
         if progress_cb:
             progress_cb(
                 f"Fetching details for clinic {j + 1} of {total_stubs}...",
-                0.5 + 0.4 * (j + 1) / max(total_stubs, 1),
+                int(50 + 40 * (j + 1) / max(total_stubs, 1)),
             )
         details = get_place_details_for_donut(stub["place_id"], api_key)
         if details:

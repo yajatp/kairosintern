@@ -42,7 +42,7 @@ def _score_url_for_team(url: str) -> int:
 
 
 def _fetch_page(url: str) -> tuple[str, str]:
-    """Returns (html, visible_text). Falls back to Playwright if text is too short."""
+    """Returns (html, visible_text)."""
     try:
         resp = requests.get(
             url,
@@ -56,61 +56,7 @@ def _fetch_page(url: str) -> tuple[str, str]:
         return "", ""
 
     text = _get_visible_text(html)
-    # NOTE: Playwright fallback disabled to speed up Streamlit Cloud deploys.
-    # Set _PLAYWRIGHT_ENABLED = True to re-enable headless browser scraping.
-    _PLAYWRIGHT_ENABLED = False
-    if _PLAYWRIGHT_ENABLED and len(text) < _MIN_VISIBLE_TEXT_LEN:
-        pw_text = _fetch_with_playwright(url)
-        if pw_text:
-            return html, pw_text
     return html, text
-
-
-_pw_browser_ready: bool = False
-
-
-def _ensure_playwright_browser() -> bool:
-    """Download Chromium binary on first use (no-op if already present)."""
-    global _pw_browser_ready
-    if _pw_browser_ready:
-        return True
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["playwright", "install", "chromium"],
-            capture_output=True,
-            timeout=180,
-        )
-        _pw_browser_ready = result.returncode == 0
-        if not _pw_browser_ready:
-            logger.warning("playwright install chromium exited %d", result.returncode)
-        return _pw_browser_ready
-    except Exception as e:
-        logger.warning("Could not install Playwright Chromium: %s", e)
-        return False
-
-
-def _fetch_with_playwright(url: str) -> str:
-    """Headless render fallback for JS-heavy sites. Silent no-op if Playwright not available."""
-    try:
-        from playwright.sync_api import sync_playwright
-    except ImportError:
-        return ""
-
-    if not _ensure_playwright_browser():
-        return ""
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-            page.goto(url, timeout=20000, wait_until="networkidle")
-            text = page.inner_text("body")
-            browser.close()
-            return " ".join(text.split())
-    except Exception as e:
-        logger.debug("Playwright failed for %s: %s", url, e)
-        return ""
 
 
 def _extract_internal_links(html: str, base_url: str) -> list[str]:

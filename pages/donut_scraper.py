@@ -35,8 +35,9 @@ def _init_pipeline_state() -> None:
     if "_donut_pipeline" not in st.session_state:
         st.session_state._donut_pipeline = {
             "running": False,
-            "progress": 0.0,
+            "progress": 0,
             "message": "",
+            "messages": [],
             "clinics": None,
             "error": None,
             "polygon_coords": None,
@@ -56,12 +57,16 @@ def _run_pipeline(
 ) -> None:
     """Runs in a background thread; writes results back into session state."""
 
-    def progress(msg: str, frac: float = 0.0) -> None:
+    def progress(msg: str, pct: int = 0) -> None:
         p["message"] = msg
-        p["progress"] = frac
+        p["progress"] = pct
+        if "messages" not in p or p["messages"] is None:
+            p["messages"] = []
+        if not p["messages"] or p["messages"][-1] != msg:
+            p["messages"].append(msg)
 
     try:
-        progress("Starting grid search...", 0.02)
+        progress("Starting grid search...", 2)
 
         raw_clinics = run_grid_search(
             polygon_coords,
@@ -69,18 +74,18 @@ def _run_pipeline(
             progress_cb=progress,
         )
 
-        progress(f"Filtering {len(raw_clinics)} clinics by polygon + buffer...", 0.9)
+        progress(f"Filtering {len(raw_clinics)} clinics by polygon + buffer...", 90)
         clinics = filter_by_polygon(raw_clinics, polygon_coords, buffer_miles)
 
-        progress(f"Enriching {len(clinics)} clinics (email + dentist extraction)...", 0.92)
+        progress(f"Enriching {len(clinics)} clinics (email + dentist extraction)...", 92)
         for i, clinic in enumerate(clinics):
             progress(
                 f"Enriching clinic {i + 1} of {len(clinics)}: {clinic.get('name', '')}...",
-                0.92 + 0.07 * (i + 1) / max(len(clinics), 1),
+                92 + int(7 * (i + 1) / max(len(clinics), 1)),
             )
             enrich_clinic(clinic, gemini_key=gemini_key)
 
-        progress("Writing to Google Sheets...", 0.99)
+        progress("Writing to Google Sheets...", 99)
         sheet_result = write_run_to_sheet(
             clinics,
             polygon_coords,
@@ -91,12 +96,12 @@ def _run_pipeline(
         p["sheet_result"] = sheet_result
         p["clinics"] = clinics
         p["error"] = None
-        progress("Done.", 1.0)
+        progress("Done.", 100)
 
     except Exception as e:
         p["error"] = str(e)
         p["clinics"] = None
-        progress("Error.", 0.0)
+        progress("Error.", 0)
     finally:
         p["running"] = False
 
@@ -493,7 +498,8 @@ if run_clicked:
                 p.update({
                     "running": True, "error": None, "clinics": None,
                     "sheet_result": None, "buffer_miles": buffer_miles,
-                    "area_name": area_name,
+                    "area_name": area_name, "progress": 0, "message": "",
+                    "messages": [],
                 })
                 t = threading.Thread(
                     target=_run_pipeline,
@@ -506,7 +512,8 @@ if run_clicked:
             p.update({
                 "running": True, "error": None, "clinics": None,
                 "sheet_result": None, "buffer_miles": buffer_miles,
-                "area_name": area_name,
+                "area_name": area_name, "progress": 0, "message": "",
+                "messages": [],
             })
             t = threading.Thread(
                 target=_run_pipeline,
@@ -518,10 +525,24 @@ if run_clicked:
 
 # Progress display
 if p["running"]:
-    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-    prog_pct = p.get("progress", 0.0)
+    st.markdown("<div style='padding:16px 0 8px'>", unsafe_allow_html=True)
+    prog_pct = p.get("progress", 0)
     prog_msg = p.get("message", "Running...")
-    st.progress(prog_pct, text=prog_msg)
+    st.progress(prog_pct / 100, text=f"Scraping dentist area… {prog_pct}%")
+
+    recent = p.get("messages", [])[-6:]
+    if recent:
+        lines = "".join(
+            f"<div style='padding:2px 0;border-bottom:1px solid #ededed;font-size:11.5px;color:#6b6f76'>{m}</div>"
+            for m in recent
+        )
+        st.markdown(
+            f"<div style='font-family:ui-monospace,monospace;padding:10px 12px;"
+            f"background:#f7f7f8;border-radius:7px;"
+            f"border:1px solid #ededed;margin-top:8px'>{lines}</div>",
+            unsafe_allow_html=True,
+        )
+    st.markdown("</div>", unsafe_allow_html=True)
     st.caption("This takes 30–90 seconds depending on area size. Do not navigate away.")
     time.sleep(0.5)
     st.rerun()
