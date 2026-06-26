@@ -315,7 +315,7 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
             "marker": False,
             "circlemarker": False,
         },
-        edit_options={"edit": True, "remove": True},
+        edit_options={"edit": False, "remove": False},
     ).add_to(m)
 
     # Movable ruler — click points to measure real distance/area on the map
