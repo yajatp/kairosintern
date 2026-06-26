@@ -54,6 +54,7 @@ def _init_pipeline_state() -> None:
             "area_sqmi": 0.0,
             "city_state": "",
             "auto_buffer_miles": 0.5,
+            "pending_auto_buffer": None,
         }
 
 
@@ -161,6 +162,13 @@ def _render_sidebar_controls() -> tuple[float, str, bool, bool]:
     """Render sidebar controls. Returns (buffer_miles, area_name, run_clicked, estimate_clicked)."""
     if "buffer_slider" not in st.session_state:
         st.session_state.buffer_slider = 0.5
+
+    # Apply an adaptive buffer queued by the last polygon draw — must happen
+    # before the widget below is instantiated, or Streamlit raises.
+    pending = st.session_state._donut_pipeline.get("pending_auto_buffer")
+    if pending is not None:
+        st.session_state.buffer_slider = pending
+        st.session_state._donut_pipeline["pending_auto_buffer"] = None
 
     st.markdown("<div class='ds-section-label'>Buffer Distance</div>", unsafe_allow_html=True)
     buffer_miles = st.number_input(
@@ -511,7 +519,7 @@ else:
             p["city_state"] = city_state
             p["auto_buffer_miles"] = auto_buf
             p["last_calculated_polygon"] = new_polygon_coords
-            st.session_state.buffer_slider = auto_buf
+            p["pending_auto_buffer"] = auto_buf
             st.rerun()
 
 polygon_coords = p.get("polygon_coords")
