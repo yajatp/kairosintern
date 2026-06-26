@@ -6,6 +6,14 @@
 - **No comments explaining what code does.** Only add a comment when the WHY is non-obvious.
 - **No new files unless required.** Prefer editing existing files.
 
+## ⚠ PENDING: fold Place Details into the Find Leads search call (REMIND THE USER)
+
+**Before doing ANY change to the Find Leads page or anything related to it (`pages/leads.py`, `views/leads.py`, `pipeline/places.py`, lead scoring, lead enrichment, the leads Sheets sync), STOP and remind the user in chat that this optimization is still pending and they wanted to implement it.** Do not silently skip it.
+
+What it is: the Find Leads flow currently does a `searchText` call (basic field mask) and then a separate per-clinic `get_clinic_details` call. Verified empirically (Jun 2026) that `searchText` returns everything `get_clinic_details` needs — phone, website, hours, rating, userRatingCount, and up to 5 reviews — directly in the field mask. So the per-clinic details loop can be eliminated, the same way it already was for the Field Ops / Donut Scraper grid search (see `pipeline/donut_search.py`). Because Text Search returns up to 20 places per call, this is ~20x cheaper and far faster (e.g. a 60-lead run: ~63 API calls / ~$2.50 down to ~3 calls / ~$0.12).
+
+Implementation notes for when the user greens it: `get_clinic_details` normalizes the v1 response into old-API shapes the rest of the codebase expects (`formatted_phone_number`, `opening_hours.weekday_text`, `hours_summary`, normalized `reviews`, etc.) — that normalization must move into the `search_clinics` loop. Requesting reviews bumps Text Search to the top "Enterprise + Atmosphere" SKU. Verify normalized output (hours summary, reviews, rating) matches field-for-field against the current two-step before pushing, since this feeds the AI scoring. The Outscraper deep review scan is a separate system and is unaffected.
+
 ## ⚠ Making the user actually SEE your changes (READ THIS BEFORE CLAIMING A FIX WORKS)
 
 This app runs on **Streamlit Community Cloud** (the "Manage app" pill bottom-right and "Deploy" button top-right in the UI are the tells). The user almost always views the **deployed cloud URL**, not localhost. Cloud builds from **GitHub `origin/main`** — so **uncommitted local edits never appear in what the user sees.** "Reboot app" on Cloud just redeploys the *existing* committed code; it does NOT pick up local changes.
