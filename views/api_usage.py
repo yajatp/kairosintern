@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+import pandas as pd
 import streamlit as st
 
 from utils.usage_tracker import (
@@ -101,13 +102,38 @@ def _render_adzuna(a: dict) -> None:
     c2.metric("Daily Limit", f"~{ADZUNA_DAILY_LIMIT}/day", help="Evaluation-use limit")
 
 
+def _section_banner(title: str, subtitle: str, color: str, bg: str) -> None:
+    st.markdown(
+        f"<div style='background:{bg};border-left:5px solid {color};border-radius:10px;"
+        f"padding:12px 16px;margin:22px 0 14px;'>"
+        f"<div style='font-size:19px;font-weight:700;color:{color};letter-spacing:-0.02em;'>{title}</div>"
+        f"<div style='font-size:12px;color:#6b6f76;margin-top:3px;'>{subtitle}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _api_label(text: str, color: str) -> None:
+    st.markdown(
+        f"<div style='font-size:13px;font-weight:600;color:{color};"
+        f"margin:14px 0 2px;text-transform:uppercase;letter-spacing:0.04em;'>{text}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# Distinct accent per section so they read apart at a glance (brand palette).
+_C_TOTAL = "#183e34"   # dark forest green
+_C_LEADS = "#14756a"   # deep teal
+_C_DONUT = "#b9692f"   # warm amber
+_C_RECENT = "#475569"  # slate
+
 total = stats["total"]
 fl = stats["find_leads"]
 dn = stats["donut"]
 
 # ── Total ─────────────────────────────────────────────────────────────────────────
-st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-st.markdown("## Total — All Tools")
+_section_banner("Total — All Tools", "Combined usage and spend across Find Leads and Donut Scraper.",
+                _C_TOTAL, "rgba(24, 62, 53, 0.08)")
 
 g_total_cost = estimated_google_cost(
     total["google"]["geocode_calls"],
@@ -137,7 +163,7 @@ _t2.metric(
          f"free credit (${google_covered:.2f} covered). Outscraper has no free tier; Gemini billed as used.",
 )
 
-st.markdown("**Google Maps Platform**")
+_api_label("Google Maps Platform", _C_TOTAL)
 st.caption(
     f"Geocoding \\${GOOGLE_GEOCODE_COST}/call · "
     f"Text Search \\${GOOGLE_SEARCH_COST}/call · "
@@ -146,48 +172,57 @@ st.caption(
 )
 _render_google(total["google"], show_credit_against=g_total_cost)
 
-st.markdown("**Gemini — AI Extraction**")
+_api_label("Gemini — AI Extraction", _C_TOTAL)
 st.caption(f"gemini-3.1-flash-lite · ~\\${GEMINI_CALL_COST}/call (estimate — tune GEMINI_CALL_COST if billing differs)")
 _render_gemini(total["gemini"])
 
-st.markdown("**Outscraper — Deep Reviews**")
+_api_label("Outscraper — Deep Reviews", _C_TOTAL)
 st.caption(f"\\${OUTSCRAPER_REVIEW_COST}/review · includes \\${OUTSCRAPER_BILLING_OFFSET_USD:.2f} pre-tracking offset")
 _render_outscraper(total["outscraper"], show_billed=True)
 
-st.markdown("**Adzuna — Job Signals**")
+_api_label("Adzuna — Job Signals", _C_TOTAL)
 _render_adzuna(total["adzuna"])
 
-st.markdown("---")
-
 # ── Find Leads ─────────────────────────────────────────────────────────────────────
-st.markdown("## Find Leads")
-st.caption("Google (geocode + search + details), Gemini review scans, Outscraper deep reviews, Adzuna job signals.")
+_section_banner("Find Leads", "Google (geocode + search + details), Gemini review scans, Outscraper deep reviews, Adzuna job signals.",
+                _C_LEADS, "rgba(58, 189, 175, 0.14)")
 
-st.markdown("**Google Maps Platform**")
+_api_label("Google Maps Platform", _C_LEADS)
 _render_google(fl["google"])
-st.markdown("**Gemini — Review Scans**")
+_api_label("Gemini — Review Scans", _C_LEADS)
 _render_gemini(fl["gemini"])
-st.markdown("**Outscraper — Deep Reviews**")
+_api_label("Outscraper — Deep Reviews", _C_LEADS)
 _render_outscraper(fl["outscraper"])
-st.markdown("**Adzuna — Job Signals**")
+_api_label("Adzuna — Job Signals", _C_LEADS)
 _render_adzuna(fl["adzuna"])
 
-st.markdown("---")
-
 # ── Donut Scraper ──────────────────────────────────────────────────────────────────
-st.markdown("## Donut Scraper")
-st.caption("Google Nearby/Text Search across the grid, plus Gemini dentist + email extraction per clinic.")
+_section_banner("Donut Scraper", "Google Nearby/Text Search across the grid, plus Gemini dentist + email extraction per clinic.",
+                _C_DONUT, "rgba(207, 124, 63, 0.12)")
 
-st.markdown("**Google Maps Platform**")
+_api_label("Google Maps Platform", _C_DONUT)
 _render_google(dn["google"], search_only=True)
-st.markdown("**Gemini — Dentist / Email Extraction**")
+_api_label("Gemini — Dentist / Email Extraction", _C_DONUT)
 _render_gemini(dn["gemini"])
 
-st.markdown("---")
-
 # ── Recent runs ──────────────────────────────────────────────────────────────────
-st.markdown("### Recent Runs")
-st.caption("Last 20 runs")
+_FL_TINT = "rgba(58, 189, 175, 0.16)"
+_DN_TINT = "rgba(207, 124, 63, 0.16)"
+
+
+def _legend_chip(label: str, color: str) -> str:
+    return (
+        f"<span style='display:inline-block;width:11px;height:11px;border-radius:3px;"
+        f"background:{color};margin:0 5px 0 12px;vertical-align:middle;'></span>"
+        f"<span style='vertical-align:middle;'>{label}</span>"
+    )
+
+
+_recent_subtitle = (
+    "Last 20 runs across both tools — rows are tinted by source."
+    + _legend_chip("Find Leads", _C_LEADS) + _legend_chip("Donut Scraper", _C_DONUT)
+)
+_section_banner("Recent Runs", _recent_subtitle, _C_RECENT, "rgba(71, 85, 105, 0.08)")
 
 history = get_run_history(20)
 
@@ -228,7 +263,17 @@ else:
             "Stopped Early":      "Yes" if r.get("stopped_early") else "—",
         })
 
-    st.dataframe(rows, use_container_width=True, hide_index=True)
+    df = pd.DataFrame(rows)
+
+    def _tint_row(row):
+        color = _DN_TINT if row["Page"] == "Donut" else _FL_TINT
+        return [f"background-color: {color}"] * len(row)
+
+    st.dataframe(
+        df.style.apply(_tint_row, axis=1),
+        use_container_width=True,
+        hide_index=True,
+    )
 
 st.markdown("---")
 st.caption(
