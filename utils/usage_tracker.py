@@ -70,6 +70,13 @@ GOOGLE_GEOCODE_COST         = 0.005
 GOOGLE_SEARCH_COST          = 0.032
 GOOGLE_DETAIL_COST          = 0.017
 ADZUNA_DAILY_LIMIT          = 250
+# Per-call estimate for gemini-3.1-flash-lite structured extraction / review scan.
+# Researched Jun 2026: standard-tier pricing is $0.25/1M input, $1.50/1M output tokens
+# (https://ai.google.dev/gemini-api/docs/pricing — no prompt-size tiering; Preview priced the same).
+# Donut extraction caps input at ~4000 chars of site text (~1000 tok) + ~200 tok prompt, ~200 tok out:
+#   1200*0.25/1e6 + 200*1.50/1e6 = $0.0006/call. Find Leads review scans can run higher (larger review
+#   payloads), so this is a rough single-call estimate — switch to token-metered tracking for exact costs.
+GEMINI_CALL_COST            = 0.0006
 
 _SUPABASE_URL: str = ""
 _SUPABASE_KEY: str = ""
@@ -123,6 +130,10 @@ def estimated_outscraper_cost(reviews: int) -> float:
     return reviews * OUTSCRAPER_REVIEW_COST
 
 
+def estimated_gemini_cost(calls: int) -> float:
+    return calls * GEMINI_CALL_COST
+
+
 def _current_ym() -> str:
     return datetime.now().strftime("%Y-%m")
 
@@ -135,6 +146,7 @@ def _blank_month() -> dict:
         "google":     {"geocode_calls": 0, "search_calls": 0, "detail_calls": 0},
         "adzuna":     {"job_fetch_calls": 0},
         "outscraper": {"reviews_used": 0},
+        "gemini":     {"calls": 0},
     }
 
 
@@ -169,7 +181,7 @@ def get_monthly_stats() -> dict:
                 headers=_headers(prefer=""),
                 params={
                     "timestamp": f"gte.{start}",
-                    "select": "geocode_calls,search_calls,detail_calls,adzuna_calls,outscraper_reviews",
+                    "select": "geocode_calls,search_calls,detail_calls,adzuna_calls,outscraper_reviews,gemini_calls",
                 },
                 timeout=8,
             )
@@ -183,11 +195,78 @@ def get_monthly_stats() -> dict:
                 },
                 "adzuna":     {"job_fetch_calls":  sum(r.get("adzuna_calls", 0) for r in runs)},
                 "outscraper": {"reviews_used": sum(r.get("outscraper_reviews", 0) for r in runs)},
+                "gemini":     {"calls": sum(r.get("gemini_calls", 0) for r in runs)},
             }
         except Exception as e:
             logger.warning(f"Supabase monthly stats failed: {e}")
 
     return _local_load()["month"]
+
+
+def _blank_source_stats() -> dict:
+    return {
+        "google":     {"geocode_calls": 0, "search_calls": 0, "detail_calls": 0},
+        "adzuna":     {"job_fetch_calls": 0},
+        "outscraper": {"reviews_used": 0},
+        "gemini":     {"calls": 0},
+    }
+
+
+def _add_run_to_bucket(bucket: dict, r: dict) -> None:
+    bucket["google"]["geocode_calls"] += r.get("geocode_calls", 0)
+    bucket["google"]["search_calls"]  += r.get("search_calls", 0)
+    bucket["google"]["detail_calls"]  += r.get("detail_calls", 0)
+    bucket["adzuna"]["job_fetch_calls"] += r.get("adzuna_calls", 0)
+    bucket["outscraper"]["reviews_used"] += r.get("outscraper_reviews", 0)
+    bucket["gemini"]["calls"] += r.get("gemini_calls", 0)
+
+
+def get_monthly_stats_by_source() -> dict:
+    """Monthly usage broken down by run source plus a combined total.
+
+    Returns {"year_month", "total", "find_leads", "donut"} where each section
+    has the same shape as get_monthly_stats (google/adzuna/outscraper). Runs with
+    no source (historical rows) count as "find_leads".
+    """
+    result = {
+        "year_month": _current_ym(),
+        "total":      _blank_source_stats(),
+        "find_leads": _blank_source_stats(),
+        "donut":      _blank_source_stats(),
+    }
+
+    if _supabase_ok():
+        try:
+            start = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
+            resp = requests.get(
+                f"{_SUPABASE_URL}/rest/v1/runs",
+                headers=_headers(prefer=""),
+                params={
+                    "timestamp": f"gte.{start}",
+                    "select": "geocode_calls,search_calls,detail_calls,adzuna_calls,outscraper_reviews,gemini_calls,source",
+                },
+                timeout=8,
+            )
+            runs = resp.json() if resp.ok else []
+            for r in runs:
+                src = r.get("source") or "find_leads"
+                if src not in result:
+                    result[src] = _blank_source_stats()
+                _add_run_to_bucket(result[src], r)
+                _add_run_to_bucket(result["total"], r)
+            return result
+        except Exception as e:
+            logger.warning(f"Supabase per-source stats failed: {e}")
+
+    for r in _local_load().get("runs", []):
+        if not str(r.get("timestamp", "")).startswith(_current_ym()):
+            continue
+        src = r.get("source") or "find_leads"
+        if src not in result:
+            result[src] = _blank_source_stats()
+        _add_run_to_bucket(result[src], r)
+        _add_run_to_bucket(result["total"], r)
+    return result
 
 
 def get_run_history(limit: int = 20) -> list[dict]:
@@ -207,11 +286,13 @@ def get_run_history(limit: int = 20) -> list[dict]:
                         "id":                      r.get("id"),
                         "timestamp":               r.get("timestamp", ""),
                         "location":                r.get("location", ""),
+                        "source":                  r.get("source") or "find_leads",
                         "geocode_calls":           r.get("geocode_calls", 0),
                         "search_calls":            r.get("search_calls", 0),
                         "detail_calls":            r.get("detail_calls", 0),
                         "adzuna_calls":            r.get("adzuna_calls", 0),
                         "outscraper_reviews":      r.get("outscraper_reviews", 0),
+                        "gemini_calls":            r.get("gemini_calls", 0),
                         "clinics_found":           r.get("clinics_found", 0),
                         "leads_found":             r.get("leads_found", 0),
                         "stopped_early":           r.get("stopped_early", False),
@@ -252,8 +333,14 @@ def record_run(
     radius_miles: int | None = None,
     pattern_fallback_count: int = 0,
     run_errors: list | None = None,
+    source: str = "find_leads",
+    gemini_calls: int = 0,
 ) -> int | None:
-    """Record a pipeline run and return the new run's id (Supabase only; None otherwise)."""
+    """Record a pipeline run and return the new run's id (Supabase only; None otherwise).
+
+    ``source`` tags which tool produced the run — "find_leads" or "donut" —
+    so API Usage can break costs down per page.
+    """
     import json as _json
     payload = {
         "timestamp":          datetime.utcnow().isoformat() + "Z",
@@ -266,6 +353,8 @@ def record_run(
         "clinics_found":      clinics_found,
         "leads_found":        leads_found,
         "stopped_early":      stopped_early,
+        "source":             source,
+        "gemini_calls":       gemini_calls,
     }
     if radius_miles is not None:
         payload["radius_miles"] = radius_miles
@@ -290,7 +379,7 @@ def record_run(
                 return None
             elif resp.status_code in (400, 422):
                 # Strip optional columns and retry — handles missing migrations gracefully
-                optional_cols = {"radius_miles", "pattern_fallback_count", "run_errors"}
+                optional_cols = {"radius_miles", "pattern_fallback_count", "run_errors", "source", "gemini_calls"}
                 trimmed = {k: v for k, v in payload.items() if k not in optional_cols}
                 resp2 = requests.post(
                     f"{_SUPABASE_URL}/rest/v1/runs",
@@ -318,6 +407,7 @@ def record_run(
     m["google"]["detail_calls"]  += detail_calls
     m["adzuna"]["job_fetch_calls"] += adzuna_calls
     m["outscraper"]["reviews_used"] += outscraper_reviews
+    m.setdefault("gemini", {"calls": 0})["calls"] += gemini_calls
     state["runs"].append(payload)
     _local_save(state)
     return None

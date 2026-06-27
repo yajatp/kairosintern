@@ -160,7 +160,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
     p["search_location"] = location
     p["skipped_clinics"] = []
 
-    _calls = {"geocode": 0, "search": 0, "detail": 0, "adzuna": 0, "outscraper_reviews": 0}
+    _calls = {"geocode": 0, "search": 0, "detail": 0, "adzuna": 0, "outscraper_reviews": 0, "gemini": 0}
     leads  = []
 
     def log(msg: str) -> None:
@@ -243,6 +243,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
             _gem_key = p.get("gemini_key", "")
             if _gem_key:
                 from pipeline.review_scanner_ab import scan_method_b
+                _calls["gemini"] += 1
                 try:
                     review_data = scan_method_b(details.get("reviews", []), _gem_key)
                     review_data["review_method"] = "ai"
@@ -325,6 +326,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 _gem_key = p.get("gemini_key", "")
                 if _gem_key:
                     from pipeline.review_scanner_ab import scan_method_b as _smb
+                    _calls["gemini"] += 1
                     try:
                         dr = _smb(deep_reviews, _gem_key)
                         dr["review_method"] = "ai"
@@ -439,6 +441,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                 radius_miles=radius_miles,
                 pattern_fallback_count=p.get("fallback_count", 0),
                 run_errors=p.get("run_errors", []),
+                gemini_calls=_calls["gemini"],
             )
             p["last_run_id"] = run_id
         except Exception as e:
@@ -509,6 +512,7 @@ def _run_pipeline(p: dict, location: str, radius_miles: int, max_results: int) -
                     radius_miles=radius_miles,
                     pattern_fallback_count=p.get("fallback_count", 0),
                     run_errors=p.get("run_errors", []),
+                    gemini_calls=_calls["gemini"],
                 )
                 p["last_run_id"] = run_id
             except Exception:

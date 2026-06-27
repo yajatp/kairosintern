@@ -289,6 +289,7 @@ def _extract_independent(clinic: dict, text: str, gemini_key: str) -> None:
         "role (owner/associate/unclear), confidence (high/medium/low), and email if present."
     )
 
+    clinic["_gemini_calls"] = clinic.get("_gemini_calls", 0) + 1
     try:
         result = _call_gemini_structured(prompt, _INDEPENDENT_SCHEMA, gemini_key)
         dentist = result.get("head_dentist", {})
@@ -340,6 +341,7 @@ def _extract_dso(clinic: dict, text: str, gemini_key: str) -> None:
         "Also extract a contact email if present."
     )
 
+    clinic["_gemini_calls"] = clinic.get("_gemini_calls", 0) + 1
     try:
         result = _call_gemini_structured(prompt, _DSO_SCHEMA, gemini_key)
         staff = result.get("staff", [])

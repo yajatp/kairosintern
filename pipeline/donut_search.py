@@ -309,12 +309,13 @@ def run_grid_search(
     radius_m: float = _SEARCH_RADIUS_M,
     buffer_miles: float = 0.0,
     progress_cb: Callable[[str, float], None] | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], int]:
     """
     Tile the polygon bounding box (expanded by buffer_miles) with overlapping circles,
     run Nearby Search for each, deduplicate by Place ID. Each Nearby Search already
     returns contact + hours fields, so no per-clinic Place Details call is needed.
-    Returns raw (un-filtered) clinic list; call filter_by_polygon afterward.
+    Returns (raw un-filtered clinic list, number of Nearby Search calls made);
+    call filter_by_polygon afterward.
 
     progress_cb(message, fraction_0_to_1)
     """
@@ -340,4 +341,4 @@ def run_grid_search(
     if progress_cb:
         progress_cb(f"Found {len(clinics)} unique clinics.", 90)
 
-    return clinics
+    return clinics, total_centers

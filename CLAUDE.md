@@ -63,6 +63,10 @@ This is an **internal tool** used by the Kairos co-founders and early team. Ever
 - `leads` table: `ALTER TABLE leads ADD COLUMN IF NOT EXISTS email TEXT;`
 - `leads` table: `ALTER TABLE leads ADD COLUMN IF NOT EXISTS reviews_json TEXT;`
 - Run these migrations before deploying email extraction.
+- `runs` table (REQUIRED for the per-page API Usage breakdown — without these the API Usage page reads as all-zeros, because the per-source query selects these columns and a bad select 400s):
+  - `ALTER TABLE runs ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'find_leads';`
+  - `ALTER TABLE runs ADD COLUMN IF NOT EXISTS gemini_calls INT DEFAULT 0;`
+  - Historical rows stay `find_leads` (NULL is treated as find_leads in code). Donut Scraper runs are tagged `source = 'donut'`.
 
 ## Local dev detection
 
@@ -92,6 +96,7 @@ All pricing lives in `utils/usage_tracker.py`. When anything changes, update the
 | `GOOGLE_SEARCH_COST` | `utils/usage_tracker.py` | `0.032` | Published Maps Platform rate |
 | `GOOGLE_DETAIL_COST` | `utils/usage_tracker.py` | `0.017` | Published Maps Platform rate |
 | `GOOGLE_MONTHLY_CREDIT_USD` | `utils/usage_tracker.py` | `200.0` | Free monthly credit |
+| `GEMINI_CALL_COST` | `utils/usage_tracker.py` | `0.0006` | Per-call ESTIMATE for gemini-3.1-flash-lite. Token pricing (researched Jun 2026): $0.25/1M input, $1.50/1M output (ai.google.dev/gemini-api/docs/pricing). Donut calls cap input at ~4000 chars (~1200 in + ~200 out tok ≈ $0.0006); Find Leads review scans can run higher. For exact costs, switch to token-metered tracking via response.usage_metadata. |
 
 ## Outscraper cost tracking caveat
 

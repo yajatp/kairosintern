@@ -24,6 +24,7 @@ _DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Su
 
 OUTPUT_HEADERS = [
     "Run Date",
+    "AI Extraction",
     "Area / Tab Name",
     "Place ID",
     "Clinic Name",
@@ -186,7 +187,7 @@ def _unique_tab_name(ss, base: str) -> str:
 
 
 def _build_output_rows(
-    clinics: list[dict], tab_name: str, run_date: str,
+    clinics: list[dict], tab_name: str, run_date: str, gemini_used: bool = False,
 ) -> list[list]:
     def callable_rank(c: dict) -> int:
         has_phone = bool(c.get("phone"))
@@ -206,6 +207,7 @@ def _build_output_rows(
         hours = c.get("hours_by_day", {})
         row = [
             run_date,
+            "Gemini" if gemini_used else "Off",
             tab_name,
             c.get("place_id", ""),
             c.get("name", ""),
@@ -235,6 +237,7 @@ def write_run_to_sheet(
     area_name: str | None,
     buffer_miles: float,
     run_date: str | None = None,
+    gemini_used: bool = False,
 ) -> dict:
     """
     Write a Donut Scraper run to the Google Sheet.
@@ -304,7 +307,7 @@ def write_run_to_sheet(
             base = f"{run_date} ({centroid_lat:.2f}, {centroid_lng:.2f}) (auto)"
         tab_name = _unique_tab_name(ss, base)
 
-    rows = _build_output_rows(clinics, tab_name, run_date)
+    rows = _build_output_rows(clinics, tab_name, run_date, gemini_used)
 
     try:
         ws = ss.worksheet(tab_name)

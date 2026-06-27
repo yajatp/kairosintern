@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import os
 import threading
 import time
 from datetime import date
+
+logger = logging.getLogger(__name__)
 
 import folium
 import pandas as pd
@@ -38,7 +41,7 @@ from pipeline.donut_search import (
 from pipeline.places import geocode, reverse_geocode
 from pipeline.donut_enrichment import enrich_clinic
 from utils.donut_sheets import write_run_to_sheet
-from utils.usage_tracker import GOOGLE_SEARCH_COST
+from utils.usage_tracker import GOOGLE_SEARCH_COST, record_run
 
 
 def _get_secret(key: str) -> str:
@@ -93,7 +96,7 @@ def _run_pipeline(
     try:
         progress("Starting grid search...", 2)
 
-        raw_clinics = run_grid_search(
+        raw_clinics, search_calls = run_grid_search(
             polygon_coords,
             api_key,
             buffer_miles=buffer_miles,
@@ -122,10 +125,28 @@ def _run_pipeline(
             area_name or None,
             buffer_miles,
             run_date=date.today().isoformat(),
+            gemini_used=bool(gemini_key),
         )
         p["sheet_result"] = sheet_result
         p["clinics"] = clinics
         p["error"] = None
+
+        try:
+            record_run(
+                location=area_name or p.get("city_state", "") or "Donut area",
+                geocode_calls=0,
+                search_calls=search_calls,
+                detail_calls=0,
+                adzuna_calls=0,
+                outscraper_reviews=0,
+                clinics_found=len(clinics),
+                leads_found=len(clinics),
+                source="donut",
+                gemini_calls=sum(c.get("_gemini_calls", 0) for c in clinics),
+            )
+        except Exception as e:
+            logger.warning("Could not record donut run usage: %s", e)
+
         progress("Done.", 100)
 
     except Exception as e:
