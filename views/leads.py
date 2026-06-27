@@ -1028,7 +1028,7 @@ if leads_df is not None and not _p["running"]:
                             if st.button("View in History", key=f"skip_{sc['place_id']}", use_container_width=True):
                                 st.session_state["history_target_run"] = run_id
                                 st.session_state["history_target_lead_place_id"] = sc['place_id']
-                                st.switch_page("pages/history.py")
+                                st.switch_page("views/history.py")
 
         # ── Stat blocks ─────────────────────────────
         high_ct   = len(df[df["Pain Score"] >= 6])
@@ -1301,4 +1301,4 @@ elif leads_df is None and not _p["running"] and not _p["error"]:
                         use_container_width=True,
                     ):
                         st.session_state["history_target_run"] = _r_id
-                        st.switch_page("pages/history.py")
+                        st.switch_page("views/history.py")
