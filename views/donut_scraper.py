@@ -403,7 +403,7 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
 
     clinics = p.get("clinics")
     if clinics:
-        fg = folium.FeatureGroup(name="Dental Clinics")
+        pts: list[list[float]] = []
         for c in clinics:
             lat = c.get("lat")
             lng = c.get("lng")
@@ -411,17 +411,32 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
                 is_core = c.get("inclusion_zone") == "core"
                 color = "#183e34" if is_core else "#4b5563"
                 fill_color = "#3abdaf" if is_core else "#9ca3af"
+                name = c.get("name", "Unknown Clinic")
                 folium.CircleMarker(
                     location=[lat, lng],
                     radius=6,
-                    tooltip=c.get("name", "Unknown Clinic"),
+                    tooltip=name,
+                    popup=folium.Popup(name, max_width=250),
                     color=color,
                     fill=True,
                     fill_color=fill_color,
                     fill_opacity=0.8,
                     weight=1.5,
-                ).add_to(fg)
-        fg.add_to(m)
+                ).add_to(m)
+                pts.append([lat, lng])
+        if pts:
+            m.fit_bounds(pts, padding=(30, 30))
+
+        # Display-only results map. Mirror the working Find Leads map call
+        # (use_container_width + a non-empty returned_objects). An empty
+        # returned_objects list makes st_folium render blank and then vanish,
+        # which is what was breaking this map after a run completed.
+        st_folium(
+            m, use_container_width=True, height=440,
+            key=f"donut_map_results_{p.get('map_nonce', 0)}",
+            returned_objects=["last_object_clicked", "zoom"],
+        )
+        return None
 
     # Nonce in the key lets the Clear button reset st_folium so a stale
     # last_active_drawing can't repopulate the polygon after deletion.
@@ -435,13 +450,10 @@ def _render_draw_map(buffer_miles: float = 0.0) -> list[list[float]] | None:
         st_kwargs["zoom"] = 12
         p["applied_search_center"] = search_center
 
-    map_key = f"donut_map_results_{p.get('map_nonce', 0)}" if clinics else f"donut_draw_map_{p.get('map_nonce', 0)}"
-    returned_objs = [] if clinics else ["last_active_drawing"]
-
     result = st_folium(
         m, width="100%", height=440,
-        key=map_key,
-        returned_objects=returned_objs,
+        key=f"donut_draw_map_{p.get('map_nonce', 0)}",
+        returned_objects=["last_active_drawing"],
         **st_kwargs,
     )
 
@@ -592,7 +604,10 @@ with st.sidebar:
 if p["running"]:
     st.info("Map is locked while the scraper is running.")
 else:
-    st.markdown("**Draw your target area** — polygon only, one shape at a time")
+    if p.get("clinics"):
+        st.markdown("**Clinics found in your area** — hover or click a pin to see the name")
+    else:
+        st.markdown("**Draw your target area** — polygon only, one shape at a time")
     new_polygon_coords = _render_draw_map(buffer_miles)
 
     # One compact row under the map: search box + a contextual right slot
