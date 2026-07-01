@@ -11,8 +11,17 @@ logger = logging.getLogger(__name__)
 
 PLACES_BASE = "https://places.googleapis.com/v1"
 
-_SEARCH_RADIUS_M = 1000.0
-_SPACING_FACTOR = 1.2
+_MAX_RESULTS = 20
+_SQRT2 = math.sqrt(2.0)
+
+# Adaptive grid. Each region is a square searched by one Nearby Search circle that
+# circumscribes it (radius = half_side * sqrt2), so the whole square is covered. A
+# square that comes back saturated (returns _MAX_RESULTS -> more may exist past the
+# cap) is split into four and recursed; sparse areas resolve in a single call while
+# dense clusters subdivide only where needed, and nothing is silently dropped.
+_TOP_HALF_SIDE_M = 1800.0   # top square ~3.6 km/side (circumscribing circle ~2.5 km)
+_MIN_HALF_SIDE_M = 300.0    # stop subdividing below this (leaf circle ~0.42 km)
+
 CIRCLE_WARNING_THRESHOLD = 200
 
 BUFFER_FLOOR_MI = 0.2
@@ -62,41 +71,74 @@ def _expand_bbox(
     return min_lat - dlat, max_lat + dlat, min_lng - dlng, max_lng + dlng
 
 
-def estimate_circle_count(
-    coords: list[list[float]], radius_m: float = _SEARCH_RADIUS_M, buffer_miles: float = 0.0,
-) -> int:
-    min_lat, max_lat, min_lng, max_lng = compute_bounding_box(coords)
-    min_lat, max_lat, min_lng, max_lng = _expand_bbox(min_lat, max_lat, min_lng, max_lng, buffer_miles)
-    spacing_m = radius_m * _SPACING_FACTOR
-    center_lat = (min_lat + max_lat) / 2.0
-    lat_span_m = (max_lat - min_lat) * 111320.0
-    lng_span_m = (max_lng - min_lng) * 111320.0 * math.cos(math.radians(center_lat))
-    rows = max(1, math.ceil(lat_span_m / spacing_m) + 1)
-    cols = max(1, math.ceil(lng_span_m / spacing_m) + 1)
-    return rows * cols
+def _buffered_polygon(polygon_coords: list[list[float]], buffer_miles: float):
+    """Shapely polygon (lng, lat) expanded by buffer_miles, mirroring
+    filter_by_polygon's 1 mi ~= 1/69 deg buffer. Returns None if shapely is
+    unavailable, in which case callers fall back to searching the whole bbox."""
+    try:
+        from shapely.geometry import Polygon
+    except ImportError:
+        return None
+    try:
+        poly = Polygon([(c[0], c[1]) for c in polygon_coords])
+        if buffer_miles > 0:
+            poly = poly.buffer(buffer_miles / 69.0)
+        return poly if poly.is_valid else poly.buffer(0)
+    except Exception:
+        return None
 
 
-def _tile_bounding_box(
-    min_lat: float,
-    max_lat: float,
-    min_lng: float,
-    max_lng: float,
-    radius_m: float = _SEARCH_RADIUS_M,
+def _square_touches_polygon(center_lat: float, center_lng: float, half_side_m: float, poly) -> bool:
+    """True if the square of side 2*half_side centered here intersects the polygon.
+    Squares tile the whole bbox, so any polygon area is covered by some square; a
+    square that misses the polygon contributes nothing and is safely skipped."""
+    if poly is None:
+        return True
+    from shapely.geometry import box
+
+    dlat = _meters_to_lat_deg(half_side_m)
+    dlng = _meters_to_lng_deg(half_side_m, center_lat)
+    return poly.intersects(
+        box(center_lng - dlng, center_lat - dlat, center_lng + dlng, center_lat + dlat)
+    )
+
+
+def _top_square_centers(
+    min_lat: float, max_lat: float, min_lng: float, max_lng: float, half_side_m: float,
 ) -> list[tuple[float, float]]:
-    spacing_m = radius_m * _SPACING_FACTOR
+    """Centers of the top-level squares (side 2*half_side) tiling the bbox with no gaps."""
     center_lat = (min_lat + max_lat) / 2.0
-    dy = _meters_to_lat_deg(spacing_m)
-    dx = _meters_to_lng_deg(spacing_m, center_lat)
+    dlat = _meters_to_lat_deg(half_side_m)
+    dlng = _meters_to_lng_deg(half_side_m, center_lat)
+    span_lat_m = max((max_lat - min_lat) * 111320.0, 1.0)
+    span_lng_m = max((max_lng - min_lng) * 111320.0 * math.cos(math.radians(center_lat)), 1.0)
+    n_rows = max(1, math.ceil(span_lat_m / (2 * half_side_m)))
+    n_cols = max(1, math.ceil(span_lng_m / (2 * half_side_m)))
 
     centers: list[tuple[float, float]] = []
-    lat = min_lat
-    while lat <= max_lat + dy * 0.5:
-        lng = min_lng
-        while lng <= max_lng + dx * 0.5:
-            centers.append((lat, lng))
-            lng += dx
-        lat += dy
+    for r in range(n_rows):
+        lat = min_lat + dlat + r * 2 * dlat
+        for c in range(n_cols):
+            centers.append((lat, min_lng + dlng + c * 2 * dlng))
     return centers
+
+
+def estimate_circle_count(
+    coords: list[list[float]], buffer_miles: float = 0.0,
+) -> int:
+    """Lower-bound estimate of Nearby Search calls for the pre-run cost preview:
+    the count of top-level squares whose area touches the polygon. The live run
+    adds calls only where a square saturates and subdivides, so this is a floor."""
+    min_lat, max_lat, min_lng, max_lng = compute_bounding_box(coords)
+    min_lat, max_lat, min_lng, max_lng = _expand_bbox(min_lat, max_lat, min_lng, max_lng, buffer_miles)
+    centers = _top_square_centers(min_lat, max_lat, min_lng, max_lng, _TOP_HALF_SIDE_M)
+    poly = _buffered_polygon(coords, buffer_miles)
+    if poly is None:
+        return len(centers)
+    return sum(
+        1 for (lat, lng) in centers
+        if _square_touches_polygon(lat, lng, _TOP_HALF_SIDE_M, poly)
+    )
 
 
 def _nearby_search_page(
@@ -110,7 +152,7 @@ def _nearby_search_page(
             }
         },
         "includedTypes": ["dentist"],
-        "maxResultCount": 20,
+        "maxResultCount": _MAX_RESULTS,
     }
 
     resp = requests.post(
@@ -142,15 +184,13 @@ def _parse_weekday_hours(opening_hours: dict) -> dict[str, str]:
     return hours_by_day
 
 
-def _search_one_circle(lat: float, lng: float, radius_m: float, api_key: str) -> list[dict]:
+def _places_from_response(data: dict) -> tuple[list[dict], int]:
+    """Parse a Nearby Search response into clinic dicts. Returns (clinics, raw_count)
+    where raw_count is the number of places the API returned before our dentist/closed
+    filtering -- raw_count == _MAX_RESULTS signals the cap was hit (subdivide)."""
+    places = data.get("places", [])
     results: list[dict] = []
-
-    data = _nearby_search_page(lat, lng, radius_m, api_key)
-    if "error" in data:
-        logger.warning("Nearby Search error at (%.5f,%.5f): %s", lat, lng, data["error"])
-        return results
-
-    for place in data.get("places", []):
+    for place in places:
         if place.get("businessStatus") == "CLOSED_PERMANENTLY":
             continue
         if place.get("primaryType") != "dentist":
@@ -166,8 +206,48 @@ def _search_one_circle(lat: float, lng: float, radius_m: float, api_key: str) ->
             "lng": loc.get("longitude"),
             "hours_by_day": _parse_weekday_hours(place.get("regularOpeningHours", {})),
         })
+    return results, len(places)
 
-    return results
+
+def _search_region(
+    center_lat: float,
+    center_lng: float,
+    half_side_m: float,
+    api_key: str,
+    poly,
+    seen: dict[str, dict],
+    stats: dict[str, int],
+) -> None:
+    """Search one square; if it saturates, split into four and recurse. Squares
+    outside the polygon are skipped without a call. Dedups into ``seen`` by place ID."""
+    if not _square_touches_polygon(center_lat, center_lng, half_side_m, poly):
+        return
+
+    data = _nearby_search_page(center_lat, center_lng, half_side_m * _SQRT2, api_key)
+    stats["calls"] += 1
+    time.sleep(0.1)
+    if "error" in data:
+        logger.warning(
+            "Nearby Search error at (%.5f,%.5f): %s", center_lat, center_lng, data["error"]
+        )
+        return
+
+    clinics, raw_count = _places_from_response(data)
+    for clinic in clinics:
+        pid = clinic.get("place_id")
+        if pid and pid not in seen:
+            seen[pid] = clinic
+
+    if raw_count >= _MAX_RESULTS and half_side_m > _MIN_HALF_SIDE_M:
+        h = half_side_m / 2.0
+        dlat = _meters_to_lat_deg(h)
+        dlng = _meters_to_lng_deg(h, center_lat)
+        for sy in (-1, 1):
+            for sx in (-1, 1):
+                _search_region(
+                    center_lat + sy * dlat, center_lng + sx * dlng,
+                    h, api_key, poly, seen, stats,
+                )
 
 
 def get_place_details_for_donut(place_id: str, api_key: str) -> dict:
@@ -308,14 +388,21 @@ def filter_by_polygon(
 def run_grid_search(
     polygon_coords: list[list[float]],
     api_key: str,
-    radius_m: float = _SEARCH_RADIUS_M,
     buffer_miles: float = 0.0,
     progress_cb: Callable[[str, float], None] | None = None,
 ) -> tuple[list[dict], int]:
     """
-    Tile the polygon bounding box (expanded by buffer_miles) with overlapping circles,
-    run Nearby Search for each, deduplicate by Place ID. Each Nearby Search already
-    returns contact + hours fields, so no per-clinic Place Details call is needed.
+    Adaptive grid search over the drawn polygon (expanded by buffer_miles).
+
+    The buffered bounding box is tiled into top-level squares; each square whose
+    area touches the polygon is searched with one Nearby Search circle that
+    circumscribes it. A square that comes back saturated (>= _MAX_RESULTS, meaning
+    the 20-result cap likely hid some) is split into four and recursed, so sparse
+    areas cost a single call per top square while dense clusters subdivide only where
+    needed -- and nothing is silently dropped. Squares entirely outside the polygon
+    are never searched. Each Nearby Search returns contact + hours fields, so no
+    per-clinic Place Details call is needed. Results are deduplicated by Place ID.
+
     Returns (raw un-filtered clinic list, number of Nearby Search calls made);
     call filter_by_polygon afterward.
 
@@ -323,24 +410,23 @@ def run_grid_search(
     """
     min_lat, max_lat, min_lng, max_lng = compute_bounding_box(polygon_coords)
     min_lat, max_lat, min_lng, max_lng = _expand_bbox(min_lat, max_lat, min_lng, max_lng, buffer_miles)
-    centers = _tile_bounding_box(min_lat, max_lat, min_lng, max_lng, radius_m)
-    total_centers = len(centers)
+
+    poly = _buffered_polygon(polygon_coords, buffer_miles)
+    top_centers = _top_square_centers(min_lat, max_lat, min_lng, max_lng, _TOP_HALF_SIDE_M)
+    total = len(top_centers)
 
     seen: dict[str, dict] = {}
-    for i, (lat, lng) in enumerate(centers):
+    stats: dict[str, int] = {"calls": 0}
+    for i, (lat, lng) in enumerate(top_centers):
         if progress_cb:
             progress_cb(
-                f"Searching grid cell {i + 1} of {total_centers}...",
-                int(2 + 88 * (i + 1) / max(total_centers, 1)),
+                f"Searching grid region {i + 1} of {total} ({stats['calls']} calls so far)...",
+                int(2 + 88 * (i + 1) / max(total, 1)),
             )
-        for clinic in _search_one_circle(lat, lng, radius_m, api_key):
-            pid = clinic.get("place_id")
-            if pid and pid not in seen:
-                seen[pid] = clinic
-        time.sleep(0.1)
+        _search_region(lat, lng, _TOP_HALF_SIDE_M, api_key, poly, seen, stats)
 
     clinics = list(seen.values())
     if progress_cb:
-        progress_cb(f"Found {len(clinics)} unique clinics.", 90)
+        progress_cb(f"Found {len(clinics)} unique clinics in {stats['calls']} searches.", 90)
 
-    return clinics, total_centers
+    return clinics, stats["calls"]
